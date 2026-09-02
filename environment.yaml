@@ -1,0 +1,22 @@
+name: changzhou-rag-demo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # Core local web application and deterministic fallback retrieval.
+      - "fastapi>=0.115,<1.0"
+      - "uvicorn[standard]>=0.30,<1.0"
+      - "jinja2>=3.1,<4.0"
+      - "python-dotenv>=1.0,<2.0"
+      - "httpx>=0.27,<1.0"
+      - "numpy>=1.26,<3.0"
+      # Local BGE-M3 embedding stack. The CUDA wheel is appropriate for the
+      # RTX 3050 machine used by this demo; CPU-only users can replace it with
+      # a PyTorch CPU wheel and build the index with --device cpu.
+      - "--extra-index-url https://download.pytorch.org/whl/cu126"
+      - "torch==2.6.0+cu126"
+      - "FlagEmbedding>=1.2.11"
+      - "huggingface-hub>=0.26"

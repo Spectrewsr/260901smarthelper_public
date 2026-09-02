@@ -1,0 +1,9 @@
+# Web application
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+jinja2>=3.1,<4.0
+python-dotenv>=1.0,<2.0
+httpx>=0.27,<1.0
+
+# Local deterministic retrieval/indexing (no model download required).
+numpy>=1.26,<3.0

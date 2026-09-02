@@ -1,0 +1,27 @@
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials/
+
+# Downloaded models and generated retrieval artifacts
+models/
+.cache/
+data/derived/*.npz
+data/derived/*.jsonl
+data/derived/index_manifest.json
+
+# Editor and operating-system files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="常州产业链招商助手：基于公开资料的本地企业检索与可追溯招商线索演示。">
+  <title>常州产业链招商助手 · 本地演示</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+</head>
+<body>
+  <a class="skip-link" href="#consultation">跳到咨询内容</a>
+
+  <header class="site-header">
+    <div class="shell header-content">
+      <a class="brand" href="#consultation" aria-label="常州产业链招商助手首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>
+          <strong>常州产业链招商助手</strong>
+          <small>Changzhou Industry Link</small>
+        </span>
+      </a>
+      <nav class="primary-nav" aria-label="主导航">
+        <button class="nav-link is-active" type="button" data-view-target="consultation">招商咨询</button>
+        <button class="nav-link" type="button" data-view-target="directory">企业资料库</button>
+      </nav>
+      <div class="header-meta">
+        <span class="local-pill"><span class="live-dot"></span>本地运行</span>
+        <span class="demo-pill">DEMO 0.1</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="consultation" class="view is-active" aria-labelledby="consultation-title">
+      <div class="shell">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">公开资料 · 可追溯 · 招商线索</p>
+            <h1 id="consultation-title">把产业需求<br><em>变成可核验的企业线索</em></h1>
+            <p class="hero-description">输入行业、目标企业或招商需求，系统将从本地企业资料中寻找潜在匹配，并把每项判断连回公开来源。</p>
+            <div class="hero-notes" aria-label="产品特点">
+              <span>本地检索</span><span>产业链匹配</span><span>来源可查</span>
+            </div>
+          </div>
+
+          <section class="consult-card" aria-label="招商需求输入">
+            <div class="consult-card-topline">
+              <span class="section-kicker">招商研判</span>
+              <span id="dataStateBadge" class="data-state data-state-{{ data_status.state }}">{{ data_status.company_count }} 家资料</span>
+            </div>
+            <form id="consultForm" novalidate>
+              <label class="form-label" for="consultQuery">您想寻找什么样的产业资源？</label>
+              <textarea id="consultQuery" name="query" rows="4" maxlength="1000" placeholder="例如：寻找新能源汽车轻量化零部件及铝加工能力，优先金坛或武进"></textarea>
+              <div class="field-row">
+                <label class="select-field" for="districtFilter">
+                  <span>区域</span>
+                  <select id="districtFilter" name="district"><option value="">常州全域</option></select>
+                </label>
+                <label class="select-field" for="sectorFilter">
+                  <span>产业赛道</span>
+                  <select id="sectorFilter" name="sector"><option value="">全部赛道</option></select>
+                </label>
+                <label class="select-field compact-select" for="languageSelect">
+                  <span>输出</span>
+                  <select id="languageSelect" name="language"><option value="zh">中文</option><option value="en">EN</option></select>
+                </label>
+              </div>
+              <div class="form-actions">
+                <button id="consultSubmit" class="primary-button" type="submit">
+                  <span>生成招商研判</span><span aria-hidden="true">→</span>
+                </button>
+                <p id="consultHint" class="form-hint">检索始终在本机；若启用模型叙述，仅发送你的问题及本次最多 6 家命中企业、4 条区域资源的公开摘要。完整资料库与密钥不会外发。</p>
+              </div>
+            </form>
+            <div class="prompt-row" aria-label="示例问题">
+              <span>试试：</span>
+              <button type="button" class="prompt-chip" data-prompt="寻找动力电池结构件及精密制造供应商">动力电池结构件</button>
+              <button type="button" class="prompt-chip" data-prompt="新能源汽车轻量化零部件产业链配套">汽车轻量化</button>
+              <button type="button" class="prompt-chip" data-prompt="生物医药与医疗器械的潜在合作企业">医疗器械</button>
+            </div>
+          </section>
+        </div>
+
+        <section id="dataNotice" class="data-notice" data-state="{{ data_status.state }}" aria-live="polite">
+          <span class="notice-icon" aria-hidden="true">i</span>
+          <p id="dataNoticeText">{{ data_status.message }}</p>
+          <span id="retrievalBackend" class="notice-detail">{{ data_status.retrieval_backend }}</span>
+        </section>
+
+        <section id="results" class="results-panel" aria-live="polite" aria-busy="false">
+          <div id="emptyResults" class="empty-results">
+            <div class="empty-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
+            <p class="eyebrow">等待需求输入</p>
+            <h2>从一个具体的产业问题开始</h2>
+            <p>研判结果会展示潜在供应商、潜在客户、产业链依据、区域配套和公开来源。</p>
+          </div>
+          <div id="reportResults" hidden></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="directory" class="view" aria-labelledby="directory-title" hidden>
+      <div class="shell directory-shell">
+        <div class="directory-heading">
+          <div>
+            <p class="eyebrow">企业资料库</p>
+            <h1 id="directory-title">按产业与能力浏览企业资料</h1>
+            <p>每张企业卡片均保留资料来源，便于招商人员反查和补录。</p>
+          </div>
+          <div class="directory-stat"><strong id="directoryCount">0</strong><span>家当前可浏览</span></div>
+        </div>
+        <form id="directoryForm" class="directory-filters" role="search">
+          <label class="search-field" for="directoryQuery">
+            <span class="sr-only">检索企业</span>
+            <span aria-hidden="true">⌕</span>
+            <input id="directoryQuery" type="search" placeholder="搜索企业名称、产品、能力或园区">
+          </label>
+          <label class="select-field" for="directoryDistrict"><span>区域</span><select id="directoryDistrict"><option value="">全部区域</option></select></label>
+          <label class="select-field" for="directorySector"><span>赛道</span><select id="directorySector"><option value="">全部赛道</option></select></label>
+          <button class="secondary-button" type="submit">筛选资料</button>
+        </form>
+        <p id="directoryFeedback" class="directory-feedback" aria-live="polite"></p>
+        <div id="companyGrid" class="company-grid"></div>
+        <div class="load-more-wrap"><button id="loadMoreCompanies" class="quiet-button" type="button" hidden>加载更多企业</button></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="companyDialog" class="company-dialog" aria-labelledby="companyDialogTitle">
+    <div class="dialog-header">
+      <span class="section-kicker">企业资料</span>
+      <button id="closeCompanyDialog" class="icon-button" type="button" aria-label="关闭企业资料">×</button>
+    </div>
+    <div id="companyDialogContent"></div>
+  </dialog>
+
+  <footer class="site-footer">
+    <div class="shell footer-content">
+      <p>常州产业链招商助手 · 本地演示版</p>
+      <p>结论以页面展示的公开来源为准；“潜在匹配”不代表已建立商业关系。</p>
+    </div>
+  </footer>
+
+  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</body>
+</html>
