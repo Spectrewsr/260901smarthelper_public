@@ -138,7 +138,8 @@ class LocalRetriever:
             candidates.append(Path(supplied).expanduser())
         environment_path = os.environ.get("BGE_M3_MODEL_PATH")
         if environment_path:
-            candidates.append(Path(environment_path).expanduser())
+            configured = Path(environment_path).expanduser()
+            candidates.append(configured if configured.is_absolute() else self.paths.root.parent / configured)
         # Standard project layout: demo/data + demo/models/bge-m3.
         candidates.extend(
             [

@@ -54,6 +54,57 @@ except ImportError:  # pragma: no cover - exercised by the CLI invocation.
     )
 
 
+PARK_REQUIRED_FIELDS = (
+    "park_id",
+    "asset_id",
+    "name",
+    "district",
+    "summary",
+    "latitude",
+    "longitude",
+    "coordinate_source",
+    "coordinate_precision",
+    "confidence",
+    "verified_date",
+    "source_ids",
+    "sector_fit",
+    "metrics",
+)
+
+LANDING_SUPPORT_REQUIRED_FIELDS = (
+    "service_id",
+    "category",
+    "name",
+    "district",
+    "summary",
+    "source_ids",
+    "confidence",
+    "verified_date",
+    "tags",
+)
+
+# ``source_id`` must be present as a JSON key, but an explicitly ``unknown``
+# metric may leave its value blank.  The conditional rule is enforced below.
+PARK_METRIC_REQUIRED_FIELDS = ("key", "label", "value", "confidence")
+LANDING_SUPPORT_CATEGORIES = frozenset({"政务办事", "生活配套", "交通区位"})
+CONFIDENCE_VALUES = frozenset(
+    {
+        "a",
+        "b",
+        "c",
+        "high",
+        "medium",
+        "low",
+        "unknown",
+        "高",
+        "中",
+        "低",
+        "待核验",
+        "未核验",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     severity: str
@@ -252,6 +303,125 @@ def _validate_dates(
                 report.error(file_name, "must use ISO date YYYY-MM-DD", row=row_number, field=field)
 
 
+def _validate_confidence_values(
+    report: ValidationReport,
+    file_name: str,
+    rows: Iterable[Mapping[str, Any]],
+    field: str = "confidence",
+    *,
+    csv_rows: bool,
+) -> None:
+    """Keep confidence labels predictable without rejecting a usable record.
+
+    This mirrors the existing company-file convention: confidence vocabulary is
+    a quality warning, while a missing required value remains an error.
+    """
+
+    for index, row in enumerate(rows, start=2 if csv_rows else 1):
+        row_number = _row_number(row, index)
+        value = clean_text(row.get(field, ""))
+        if value and value.casefold() not in CONFIDENCE_VALUES:
+            report.warning(
+                file_name,
+                "confidence is best expressed as A/B/C, high/medium/low, or unknown",
+                row=row_number,
+                field=field,
+            )
+
+
+def _validate_nonempty_list_fields(
+    report: ValidationReport,
+    file_name: str,
+    rows: Iterable[Mapping[str, Any]],
+    fields: Iterable[str],
+) -> None:
+    """Require JSON arrays for multi-value JSONL fields, not string lookalikes."""
+
+    for index, row in enumerate(rows, start=1):
+        row_number = _row_number(row, index)
+        for field in fields:
+            value = row.get(field)
+            if not isinstance(value, list):
+                report.error(file_name, "must be a non-empty JSON array", row=row_number, field=field)
+                continue
+            if not value or any(not clean_text(item) for item in value):
+                report.error(file_name, "must contain only non-blank values", row=row_number, field=field)
+
+
+def _validate_jsonl_coordinates(
+    report: ValidationReport,
+    file_name: str,
+    rows: Iterable[Mapping[str, Any]],
+) -> None:
+    for index, row in enumerate(rows, start=1):
+        row_number = _row_number(row, index)
+        latitude = parse_coordinate(row.get("latitude"))
+        longitude = parse_coordinate(row.get("longitude"))
+        if latitude is None or not -90 <= latitude <= 90:
+            report.error(file_name, "latitude must be between -90 and 90", row=row_number, field="latitude")
+        if longitude is None or not -180 <= longitude <= 180:
+            report.error(file_name, "longitude must be between -180 and 180", row=row_number, field="longitude")
+
+
+def _validate_park_metrics(
+    report: ValidationReport,
+    parks: Iterable[Mapping[str, Any]],
+    known_source_ids: set[str],
+) -> None:
+    """Validate park benchmark metrics and their per-metric evidence links."""
+
+    file_name = "parks.jsonl"
+    for index, park in enumerate(parks, start=1):
+        row_number = _row_number(park, index)
+        metrics = park.get("metrics")
+        if not isinstance(metrics, list):
+            # The JSON-array shape is already reported by the general helper.
+            continue
+        if not metrics:
+            report.error(file_name, "must contain at least one benchmark metric", row=row_number, field="metrics")
+            continue
+        seen_keys: set[str] = set()
+        for metric_index, metric in enumerate(metrics, start=1):
+            field_prefix = f"metrics[{metric_index}]"
+            if not isinstance(metric, Mapping):
+                report.error(file_name, "metric must be a JSON object", row=row_number, field=field_prefix)
+                continue
+            if "source_id" not in metric:
+                report.error(file_name, "required field is missing", row=row_number, field=f"{field_prefix}.source_id")
+            for field in PARK_METRIC_REQUIRED_FIELDS:
+                if not clean_text(metric.get(field, "")):
+                    report.error(file_name, "required value is blank", row=row_number, field=f"{field_prefix}.{field}")
+            key = clean_text(metric.get("key", ""))
+            if key:
+                if key in seen_keys:
+                    report.error(file_name, "duplicate metric key within park", row=row_number, field=f"{field_prefix}.key")
+                seen_keys.add(key)
+            confidence = clean_text(metric.get("confidence", ""))
+            if confidence and confidence.casefold() not in CONFIDENCE_VALUES:
+                report.warning(
+                    file_name,
+                    "confidence is best expressed as A/B/C, high/medium/low, or unknown",
+                    row=row_number,
+                    field=f"{field_prefix}.confidence",
+                )
+            source_id = clean_text(metric.get("source_id", ""))
+            if not source_id:
+                if confidence.casefold() != "unknown":
+                    report.error(
+                        file_name,
+                        "a metric without source_id must use confidence 'unknown'",
+                        row=row_number,
+                        field=f"{field_prefix}.source_id",
+                    )
+            elif source_id not in known_source_ids:
+                report.error(
+                    file_name,
+                    f"references unknown source_id {source_id!r}",
+                    row=row_number,
+                    field=f"{field_prefix}.source_id",
+                )
+
+
 def _validate_company_coordinates(report: ValidationReport, rows: Iterable[Mapping[str, Any]]) -> None:
     for index, row in enumerate(rows, start=2):
         latitude_text = clean_text(row.get("latitude", ""))
@@ -272,6 +442,20 @@ def _validate_company_coordinates(report: ValidationReport, rows: Iterable[Mappi
             report.error("companies.csv", "latitude must be between -90 and 90", row=index, field="latitude")
         if longitude is None or not -180 <= longitude <= 180:
             report.error("companies.csv", "longitude must be between -180 and 180", row=index, field="longitude")
+
+
+def _validate_reserved_company_ids(report: ValidationReport, rows: Iterable[Mapping[str, Any]]) -> None:
+    """Keep reviewed raw IDs separate from the manual-record namespace."""
+
+    for index, row in enumerate(rows, start=2):
+        company_id = clean_text(row.get("company_id", ""))
+        if company_id.upper().startswith("MAN-"):
+            report.error(
+                "companies.csv",
+                "MAN- is reserved for reviewed CSV/manual intake records",
+                row=index,
+                field="company_id",
+            )
 
 
 def _validate_source_references(
@@ -298,7 +482,13 @@ def _validate_source_references(
 
 
 def validate_data(data_dir: str | Path, *, min_companies: int = 1) -> ValidationReport:
-    """Validate all four source files and their cross-file citation links."""
+    """Validate local source files and their cross-file citation links.
+
+    ``parks.jsonl`` and ``landing_support.jsonl`` are validated whenever the
+    full demo data bundle is present.  A deliberately small legacy fixture may
+    omit both companion files, but a partially supplied bundle is always an
+    error so a production import cannot silently lose either knowledge base.
+    """
 
     paths = resolve_data_paths(data_dir)
     report = ValidationReport()
@@ -311,9 +501,20 @@ def validate_data(data_dir: str | Path, *, min_companies: int = 1) -> Validation
     sources = _safe_csv_rows(report, paths.sources) if sources_headers_ok else []
     sectors = _safe_jsonl_rows(report, paths.sectors)
     assets = _safe_jsonl_rows(report, paths.assets)
+    parks_path = paths.raw / "parks.jsonl"
+    landing_support_path = paths.raw / "landing_support.jsonl"
+    has_parks = parks_path.is_file()
+    has_landing_support = landing_support_path.is_file()
+    parks = _safe_jsonl_rows(report, parks_path) if has_parks else []
+    landing_support = _safe_jsonl_rows(report, landing_support_path) if has_landing_support else []
+    if has_parks != has_landing_support:
+        missing = landing_support_path if has_parks else parks_path
+        report.error(missing.name, "required companion JSONL file is missing")
 
     report.counts = {
         "companies": len(companies),
+        "landing_services": len(landing_support),
+        "parks": len(parks),
         "regional_assets": len(assets),
         "sector_profiles": len(sectors),
         "sources": len(sources),
@@ -327,18 +528,11 @@ def validate_data(data_dir: str | Path, *, min_companies: int = 1) -> Validation
     if companies_headers_ok:
         _validate_required_values(report, "companies.csv", companies, COMPANY_REQUIRED_FIELDS, csv_rows=True)
         _validate_duplicate_ids(report, "companies.csv", companies, "company_id", csv_rows=True)
+        _validate_reserved_company_ids(report, companies)
         _validate_url_fields(report, "companies.csv", companies, ("source_url",), csv_rows=True)
         _validate_dates(report, "companies.csv", companies, ("source_date", "verified_date"), csv_rows=True)
         _validate_company_coordinates(report, companies)
-        for index, row in enumerate(companies, start=2):
-            confidence = clean_text(row.get("confidence", ""))
-            if confidence and confidence.casefold() not in {"high", "medium", "low", "高", "中", "低"}:
-                report.warning(
-                    "companies.csv",
-                    "confidence is best expressed as high/medium/low (or 高/中/低)",
-                    row=index,
-                    field="confidence",
-                )
+        _validate_confidence_values(report, "companies.csv", companies, csv_rows=True)
 
     source_ids: set[str] = set()
     if sources_headers_ok:
@@ -355,12 +549,69 @@ def validate_data(data_dir: str | Path, *, min_companies: int = 1) -> Validation
     _validate_url_fields(report, "sector_profiles.jsonl", sectors, ("source_urls",), csv_rows=False)
     _validate_dates(report, "sector_profiles.jsonl", sectors, ("verified_date",), csv_rows=False)
     _validate_required_values(report, "regional_assets.jsonl", assets, ASSET_REQUIRED_FIELDS, csv_rows=False)
-    _validate_duplicate_ids(report, "regional_assets.jsonl", assets, "asset_id", csv_rows=False)
+    asset_ids = _validate_duplicate_ids(report, "regional_assets.jsonl", assets, "asset_id", csv_rows=False)
     _validate_url_fields(report, "regional_assets.jsonl", assets, ("source_urls",), csv_rows=False)
     _validate_dates(report, "regional_assets.jsonl", assets, ("published_date", "verified_date"), csv_rows=False)
     if source_ids:
         _validate_source_references(report, "sector_profiles.jsonl", sectors, source_ids, "source_ids", csv_rows=False)
         _validate_source_references(report, "regional_assets.jsonl", assets, source_ids, "source_ids", csv_rows=False)
+
+    if has_parks:
+        _validate_required_values(report, "parks.jsonl", parks, PARK_REQUIRED_FIELDS, csv_rows=False)
+        _validate_duplicate_ids(report, "parks.jsonl", parks, "park_id", csv_rows=False)
+        _validate_nonempty_list_fields(report, "parks.jsonl", parks, ("source_ids", "sector_fit", "metrics"))
+        _validate_jsonl_coordinates(report, "parks.jsonl", parks)
+        _validate_dates(report, "parks.jsonl", parks, ("verified_date",), csv_rows=False)
+        _validate_confidence_values(report, "parks.jsonl", parks, csv_rows=False)
+        if source_ids:
+            _validate_source_references(report, "parks.jsonl", parks, source_ids, "source_ids", csv_rows=False)
+            _validate_park_metrics(report, parks, source_ids)
+        else:
+            # A sources.csv error is already recorded; still validate the
+            # metric structure so JSONL mistakes are visible in the same run.
+            _validate_park_metrics(report, parks, set())
+
+        for index, park in enumerate(parks, start=1):
+            row_number = _row_number(park, index)
+            asset_id = clean_text(park.get("asset_id", ""))
+            if asset_id and asset_id not in asset_ids:
+                report.error(
+                    "parks.jsonl",
+                    f"references unknown asset_id {asset_id!r}",
+                    row=row_number,
+                    field="asset_id",
+                )
+
+    if has_landing_support:
+        _validate_required_values(
+            report,
+            "landing_support.jsonl",
+            landing_support,
+            LANDING_SUPPORT_REQUIRED_FIELDS,
+            csv_rows=False,
+        )
+        _validate_duplicate_ids(report, "landing_support.jsonl", landing_support, "service_id", csv_rows=False)
+        _validate_nonempty_list_fields(report, "landing_support.jsonl", landing_support, ("source_ids", "tags"))
+        _validate_dates(report, "landing_support.jsonl", landing_support, ("verified_date",), csv_rows=False)
+        _validate_confidence_values(report, "landing_support.jsonl", landing_support, csv_rows=False)
+        for index, item in enumerate(landing_support, start=1):
+            category = clean_text(item.get("category", ""))
+            if category and category not in LANDING_SUPPORT_CATEGORIES:
+                report.error(
+                    "landing_support.jsonl",
+                    "category must be one of 政务办事、生活配套、交通区位",
+                    row=_row_number(item, index),
+                    field="category",
+                )
+        if source_ids:
+            _validate_source_references(
+                report,
+                "landing_support.jsonl",
+                landing_support,
+                source_ids,
+                "source_ids",
+                csv_rows=False,
+            )
 
     return report
 

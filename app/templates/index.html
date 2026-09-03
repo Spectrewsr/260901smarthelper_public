@@ -3,144 +3,114 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="常州产业链招商助手：基于公开资料的本地企业检索与可追溯招商线索演示。">
-  <title>常州产业链招商助手 · 本地演示</title>
+  <meta name="description" content="常州产业招商知识平台：本地 Advanced RAG、SQL 地理查询与可追溯招商协同演示。">
+  <title>常州产业招商知识平台 · 本地演示</title>
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
 </head>
 <body>
-  <a class="skip-link" href="#consultation">跳到咨询内容</a>
-
-  <header class="site-header">
-    <div class="shell header-content">
-      <a class="brand" href="#consultation" aria-label="常州产业链招商助手首页">
+  <a class="skip-link" href="#workspace">跳到工作台</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>
-          <strong>常州产业链招商助手</strong>
-          <small>Changzhou Industry Link</small>
-        </span>
-      </a>
-      <nav class="primary-nav" aria-label="主导航">
-        <button class="nav-link is-active" type="button" data-view-target="consultation">招商咨询</button>
-        <button class="nav-link" type="button" data-view-target="directory">企业资料库</button>
+        <span><strong>常州产业招商</strong><small>KNOWLEDGE PLATFORM</small></span>
+      </div>
+      <nav class="side-nav">
+        <button class="nav-item is-active" data-view="workspace" type="button"><span>◈</span>智能招商工作台</button>
+        <button class="nav-item" data-view="directory" type="button"><span>▦</span>企业与产业链</button>
+        <button class="nav-item" data-view="parks" type="button"><span>◫</span>园区对标</button>
+        <button class="nav-item" data-view="landing" type="button"><span>⌁</span>落地配套</button>
+        <button class="nav-item auth-only" data-view="ledger" type="button"><span>▤</span>企业对接台账</button>
+        <button class="nav-item admin-only" data-view="data" type="button"><span>⊞</span>知识与数据管理</button>
       </nav>
-      <div class="header-meta">
-        <span class="local-pill"><span class="live-dot"></span>本地运行</span>
-        <span class="demo-pill">DEMO 0.1</span>
-      </div>
-    </div>
-  </header>
+      <section class="architecture-card" aria-label="检索架构">
+        <p>RETRIEVAL PIPELINE</p>
+        <strong>Advanced RAG</strong>
+        <span>Context · FTS/BM25 · BGE-M3 · RRF · Cross-Encoder</span>
+        <span>SQL / Geo 不走 RAG</span>
+      </section>
+      <div class="sidebar-foot"><span class="status-dot"></span><span>仅本地运行</span></div>
+    </aside>
 
-  <main>
-    <section id="consultation" class="view is-active" aria-labelledby="consultation-title">
-      <div class="shell">
-        <div class="hero-grid">
-          <div class="hero-copy">
-            <p class="eyebrow">公开资料 · 可追溯 · 招商线索</p>
-            <h1 id="consultation-title">把产业需求<br><em>变成可核验的企业线索</em></h1>
-            <p class="hero-description">输入行业、目标企业或招商需求，系统将从本地企业资料中寻找潜在匹配，并把每项判断连回公开来源。</p>
-            <div class="hero-notes" aria-label="产品特点">
-              <span>本地检索</span><span>产业链匹配</span><span>来源可查</span>
-            </div>
-          </div>
+    <main class="main-content">
+      <header class="topbar">
+        <div><p class="breadcrumb">招商知识工作空间</p><h1 id="viewTitle">智能招商工作台</h1></div>
+        <div class="topbar-actions">
+          <span id="dataBadge" class="data-badge">{{ data_status.company_count }} 家企业资料</span>
+          <button id="loginButton" class="account-button" type="button">本地登录</button>
+          <button id="logoutButton" class="account-button" type="button" hidden>退出</button>
+        </div>
+      </header>
 
-          <section class="consult-card" aria-label="招商需求输入">
-            <div class="consult-card-topline">
-              <span class="section-kicker">招商研判</span>
-              <span id="dataStateBadge" class="data-state data-state-{{ data_status.state }}">{{ data_status.company_count }} 家资料</span>
-            </div>
-            <form id="consultForm" novalidate>
-              <label class="form-label" for="consultQuery">您想寻找什么样的产业资源？</label>
-              <textarea id="consultQuery" name="query" rows="4" maxlength="1000" placeholder="例如：寻找新能源汽车轻量化零部件及铝加工能力，优先金坛或武进"></textarea>
-              <div class="field-row">
-                <label class="select-field" for="districtFilter">
-                  <span>区域</span>
-                  <select id="districtFilter" name="district"><option value="">常州全域</option></select>
-                </label>
-                <label class="select-field" for="sectorFilter">
-                  <span>产业赛道</span>
-                  <select id="sectorFilter" name="sector"><option value="">全部赛道</option></select>
-                </label>
-                <label class="select-field compact-select" for="languageSelect">
-                  <span>输出</span>
-                  <select id="languageSelect" name="language"><option value="zh">中文</option><option value="en">EN</option></select>
-                </label>
+      <section id="workspace" class="view is-active" aria-labelledby="workspaceTitle">
+        <div class="workspace-grid">
+          <section class="query-panel panel">
+            <div class="section-title"><div><p class="eyebrow">受限工具调度</p><h2 id="workspaceTitle">从项目问题开始研判</h2></div><span class="local-label">本地证据优先</span></div>
+            <form id="queryForm">
+              <label for="queryInput">项目问题 / 招商需求</label>
+              <textarea id="queryInput" rows="4" maxlength="1000" placeholder="例如：为金坛区独资新能源汽车项目生成企业、园区、政务/生活/交通招商研判"></textarea>
+              <div class="field-grid">
+                <label><span>区域筛选</span><select id="queryDistrict"><option value="">常州全域</option></select></label>
+                <label><span>产业赛道</span><select id="querySector"><option value="">全部赛道</option></select></label>
+                <label><span>执行路径</span><select id="queryMode"><option value="auto">Agent 自动调度</option><option value="hybrid">Advanced RAG</option><option value="sql">SQL 精确查询</option><option value="geo">SQL + 地理查询</option><option value="graph">GraphRAG 关系查询</option><option value="park">园区对标</option><option value="landing">落地配套</option><option value="project">三库项目研判</option></select></label>
+                <label><span>项目名称（导出/配套）</span><input id="projectName" maxlength="160" placeholder="例如：新能源汽车项目"></label>
               </div>
-              <div class="form-actions">
-                <button id="consultSubmit" class="primary-button" type="submit">
-                  <span>生成招商研判</span><span aria-hidden="true">→</span>
-                </button>
-                <p id="consultHint" class="form-hint">检索始终在本机；若启用模型叙述，仅发送你的问题及本次最多 6 家命中企业、4 条区域资源的公开摘要。完整资料库与密钥不会外发。</p>
+              <div id="geoFields" class="geo-fields" hidden>
+                <label><span>纬度</span><input id="latitude" type="number" step="0.0001" placeholder="31.731"></label>
+                <label><span>经度</span><input id="longitude" type="number" step="0.0001" placeholder="119.597"></label>
+                <label><span>半径（km）</span><input id="radiusKm" type="number" min="0.1" max="200" step="0.1" value="20"></label>
               </div>
+              <div class="query-actions"><button id="querySubmit" class="primary-button" type="submit">开始研判 <span>→</span></button><p id="queryHint">Agent 只会调用白名单中的本地工具；语义问题才进入 RAG。</p></div>
             </form>
-            <div class="prompt-row" aria-label="示例问题">
-              <span>试试：</span>
-              <button type="button" class="prompt-chip" data-prompt="寻找动力电池结构件及精密制造供应商">动力电池结构件</button>
-              <button type="button" class="prompt-chip" data-prompt="新能源汽车轻量化零部件产业链配套">汽车轻量化</button>
-              <button type="button" class="prompt-chip" data-prompt="生物医药与医疗器械的潜在合作企业">医疗器械</button>
-            </div>
+            <div class="prompt-row"><span>示例：</span><button type="button" data-prompt="金坛区可提供高镍锂电正极材料的企业有哪些？">高镍正极材料</button><button type="button" data-prompt="蜂巢能源的上游材料和下游整车潜在线索">电池产业图谱</button><button type="button" data-prompt="按企业 ID 列出金坛区新能源汽车与新能源赛道企业">SQL 精确筛选</button></div>
           </section>
+          <aside class="system-panel panel">
+            <p class="eyebrow">知识底座状态</p>
+            <div class="stat-stack"><div><strong id="companyCount">{{ data_status.company_count }}</strong><span>企业资料</span></div><div><strong id="parkCount">—</strong><span>园区对标</span></div><div><strong id="supportCount">—</strong><span>落地配套</span></div></div>
+            <div id="backendStatus" class="backend-status">{{ data_status.retrieval_backend }}</div>
+            <a class="quiet-link" href="#" id="acceptanceButton">查看知识库验收范围 →</a>
+          </aside>
         </div>
+        <section id="queryResults" class="results-area" aria-live="polite"><div class="empty-state"><span class="empty-glyph">◌</span><h2>等待一个项目问题</h2><p>结果将展示工具执行轨迹、来源证据、潜在企业、关系路径与下一步建议。</p></div></section>
+      </section>
 
-        <section id="dataNotice" class="data-notice" data-state="{{ data_status.state }}" aria-live="polite">
-          <span class="notice-icon" aria-hidden="true">i</span>
-          <p id="dataNoticeText">{{ data_status.message }}</p>
-          <span id="retrievalBackend" class="notice-detail">{{ data_status.retrieval_backend }}</span>
-        </section>
-
-        <section id="results" class="results-panel" aria-live="polite" aria-busy="false">
-          <div id="emptyResults" class="empty-results">
-            <div class="empty-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
-            <p class="eyebrow">等待需求输入</p>
-            <h2>从一个具体的产业问题开始</h2>
-            <p>研判结果会展示潜在供应商、潜在客户、产业链依据、区域配套和公开来源。</p>
-          </div>
-          <div id="reportResults" hidden></div>
-        </section>
-      </div>
-    </section>
-
-    <section id="directory" class="view" aria-labelledby="directory-title" hidden>
-      <div class="shell directory-shell">
-        <div class="directory-heading">
-          <div>
-            <p class="eyebrow">企业资料库</p>
-            <h1 id="directory-title">按产业与能力浏览企业资料</h1>
-            <p>每张企业卡片均保留资料来源，便于招商人员反查和补录。</p>
-          </div>
-          <div class="directory-stat"><strong id="directoryCount">0</strong><span>家当前可浏览</span></div>
-        </div>
-        <form id="directoryForm" class="directory-filters" role="search">
-          <label class="search-field" for="directoryQuery">
-            <span class="sr-only">检索企业</span>
-            <span aria-hidden="true">⌕</span>
-            <input id="directoryQuery" type="search" placeholder="搜索企业名称、产品、能力或园区">
-          </label>
-          <label class="select-field" for="directoryDistrict"><span>区域</span><select id="directoryDistrict"><option value="">全部区域</option></select></label>
-          <label class="select-field" for="directorySector"><span>赛道</span><select id="directorySector"><option value="">全部赛道</option></select></label>
-          <button class="secondary-button" type="submit">筛选资料</button>
-        </form>
-        <p id="directoryFeedback" class="directory-feedback" aria-live="polite"></p>
+      <section id="directory" class="view" hidden aria-labelledby="directoryTitle">
+        <div class="page-heading"><div><p class="eyebrow">企业与产业链库</p><h2 id="directoryTitle">企业资料与标准化标签</h2><p>目录筛选使用参数化 SQL；不会触发 RAG。</p></div><span id="directoryTotal" class="count-chip">0 家</span></div>
+        <form id="directoryForm" class="toolbar panel"><label class="search-input"><span>⌕</span><input id="directoryQuery" type="search" placeholder="企业名称、产品、能力或行业"></label><label><span>区域</span><select id="directoryDistrict"><option value="">全部区域</option></select></label><label><span>赛道</span><select id="directorySector"><option value="">全部赛道</option></select></label><button class="secondary-button" type="submit">筛选</button></form>
         <div id="companyGrid" class="company-grid"></div>
-        <div class="load-more-wrap"><button id="loadMoreCompanies" class="quiet-button" type="button" hidden>加载更多企业</button></div>
-      </div>
-    </section>
-  </main>
+        <button id="loadMoreCompanies" class="secondary-button load-more" type="button" hidden>加载更多</button>
+      </section>
 
-  <dialog id="companyDialog" class="company-dialog" aria-labelledby="companyDialogTitle">
-    <div class="dialog-header">
-      <span class="section-kicker">企业资料</span>
-      <button id="closeCompanyDialog" class="icon-button" type="button" aria-label="关闭企业资料">×</button>
-    </div>
-    <div id="companyDialogContent"></div>
-  </dialog>
+      <section id="parks" class="view" hidden aria-labelledby="parksTitle">
+        <div class="page-heading"><div><p class="eyebrow">园区与招商对标库</p><h2 id="parksTitle">公开事实对标与独资洽谈支持</h2><p>未知值保留为待核验，不生成土地、厂房或优惠承诺。</p></div></div>
+        <div class="panel toolbar"><label><span>选择园区（可逗号分隔 ID）</span><input id="parkIds" value="P001,P002,P003"></label><button id="compareParks" class="primary-button" type="button">生成园区对标</button></div>
+        <div id="parkResults" class="content-grid"></div>
+      </section>
 
-  <footer class="site-footer">
-    <div class="shell footer-content">
-      <p>常州产业链招商助手 · 本地演示版</p>
-      <p>结论以页面展示的公开来源为准；“潜在匹配”不代表已建立商业关系。</p>
-    </div>
-  </footer>
+      <section id="landing" class="view" hidden aria-labelledby="landingTitle">
+        <div class="page-heading"><div><p class="eyebrow">本地化落地配套库</p><h2 id="landingTitle">政务、生活与交通三类核验包</h2><p>用于确认后续对接事项，不替代属地主管部门答复。</p></div></div>
+        <div class="panel toolbar"><label><span>项目名称</span><input id="landingProjectName" value="金坛新能源汽车项目"></label><label><span>区域</span><select id="landingDistrict"><option value="">常州市</option></select></label><button id="buildLanding" class="primary-button" type="button">生成落地配套包</button></div>
+        <div id="landingResults" class="content-grid"></div>
+      </section>
 
+      <section id="ledger" class="view" hidden aria-labelledby="ledgerTitle">
+        <div class="page-heading"><div><p class="eyebrow">企业对接电子台账</p><h2 id="ledgerTitle">记录线索、阶段与下一步</h2><p>招商专员看到脱敏联系人；管理员按权限查看完整演示联系人。</p></div></div>
+        <div id="ledgerGate" class="login-gate panel"><h3>登录后查看台账</h3><p>请使用右上角“本地登录”。</p></div>
+        <div id="ledgerWorkspace" hidden><form id="ledgerForm" class="panel form-grid"><label><span>企业 ID</span><input id="ledgerCompanyId" placeholder="例如 C006" required></label><label><span>项目名称</span><input id="ledgerProjectName" value="新能源汽车项目" required></label><label><span>阶段</span><select id="ledgerStage"><option>待联系</option><option>资料核验</option><option>首次沟通</option><option>重点跟进</option></select></label><label><span>负责人</span><input id="ledgerOwner" value="招商专员" required></label><label class="wide"><span>下一步</span><input id="ledgerNextStep" value="核验公开资料并预约首次沟通" required></label><button class="primary-button" type="submit">加入台账</button></form><div id="ledgerResults" class="ledger-list"></div></div>
+      </section>
+
+      <section id="data" class="view" hidden aria-labelledby="dataTitle">
+        <div class="page-heading"><div><p class="eyebrow">知识与数据管理</p><h2 id="dataTitle">批量预检、审核发布与人工录入</h2><p>管理员专用；来源 ID 必填，未知来源不会发布。</p></div></div>
+        <div id="adminGate" class="login-gate panel"><h3>需要管理员权限</h3><p>请以管理员账号登录。</p></div>
+        <div id="adminWorkspace" hidden class="data-workspace"><section class="panel"><h3>CSV 批量导入预检</h3><p>要求 UTF-8 CSV，至少包含 <code>company_name</code>、<code>source_id</code>、<code>confidence</code>。</p><input id="importFile" type="file" accept=".csv"><button id="previewImport" class="secondary-button" type="button">预检文件</button><div id="importResults"></div></section><section class="panel"><h3>人工录入</h3><form id="manualCompanyForm" class="form-grid"><label><span>企业名称</span><input name="company_name" required></label><label><span>来源 ID</span><input name="source_id" value="S001" required></label><label><span>区域</span><input name="district" value="常州市"></label><label><span>产业赛道</span><input name="industry_track"></label><label><span>细分行业</span><input name="industry_subtrack"></label><label><span>可信度</span><select name="confidence"><option>medium</option><option>high</option><option>low</option></select></label><label class="wide"><span>产品（以逗号分隔）</span><input name="products"></label><label class="wide"><span>公开简介</span><textarea name="summary" rows="3"></textarea></label><button class="primary-button" type="submit">保存并发布</button></form></section></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="loginDialog" class="login-dialog"><button id="closeLogin" class="dialog-close" type="button" aria-label="关闭">×</button><p class="eyebrow">统一系统入口</p><h2>本地演示登录</h2><p>账号仅用于演示权限与字段脱敏，不会连接外部身份系统。</p><form id="loginForm"><label>账号<input id="loginUsername" value="officer" required></label><label>密码<input id="loginPassword" type="password" value="officer-demo-2026" required></label><button class="primary-button" type="submit">登录</button></form><div class="demo-account"><strong>演示账号</strong><span>招商专员：officer / officer-demo-2026</span><span>管理员：admin / admin-demo-2026</span></div><p id="loginFeedback" class="form-feedback" aria-live="polite"></p></dialog>
+  <dialog id="companyDialog" class="company-dialog"><button id="closeCompany" class="dialog-close" type="button" aria-label="关闭">×</button><div id="companyDialogBody"></div></dialog>
+  <dialog id="acceptanceDialog" class="acceptance-dialog"><button id="closeAcceptance" class="dialog-close" type="button" aria-label="关闭">×</button><div id="acceptanceBody"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <script defer src="{{ url_for('static', path='app.js') }}"></script>
 </body>
 </html>

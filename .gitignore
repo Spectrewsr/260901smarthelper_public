@@ -16,9 +16,8 @@ credentials/
 # Downloaded models and generated retrieval artifacts
 models/
 .cache/
-data/derived/*.npz
-data/derived/*.jsonl
-data/derived/index_manifest.json
+data/derived/
+data/exports/
 
 # Editor and operating-system files
 .vscode/

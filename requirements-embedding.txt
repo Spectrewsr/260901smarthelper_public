@@ -1,5 +1,7 @@
 # Optional BAAI/bge-m3 embedding backend.
 # Install a CUDA-compatible PyTorch build first if GPU acceleration is desired,
-# then run: .\.venv\Scripts\python.exe -m pip install -r requirements-embedding.txt
+# then activate the Conda environment and run:
+# conda activate changzhou-rag-demo
+# python -m pip install -r requirements-embedding.txt
 -r requirements.txt
 FlagEmbedding>=1.2.11

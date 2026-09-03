@@ -1,6 +1,9 @@
-"""Application services that keep the web layer independent from the data pipeline."""
+"""Application services for the local investment knowledge platform."""
 
-from .repository import CompanyRepository
-from .reporting import ConsultationService
+from .advanced_rag import AdvancedRAG
+from .agent import InvestmentAgent
+from .auth import DemoUser, LocalAuthService
+from .exports import ExportService
+from .knowledge import KnowledgeRepository
 
-__all__ = ["CompanyRepository", "ConsultationService"]
+__all__ = ["AdvancedRAG", "DemoUser", "ExportService", "InvestmentAgent", "KnowledgeRepository", "LocalAuthService"]

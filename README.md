@@ -1,93 +1,113 @@
-# 常州产业链招商助手（本地演示版）
+# 常州产业招商知识平台（本地可运行 Demo）
 
-这是一个可在本机运行的网页版 Demo：用常州公开企业资料检索潜在供应商、客户和合作方，并把每次研判展示为可回溯的企业卡片与来源链接。
+这是一个只绑定本机 `127.0.0.1` 的网页版演示系统。它以 100 家常州企业的可追溯公开资料为底座，提供招商研判、精确筛选、距离估算、局部产业关系图谱、园区对标、落地配套、材料导出、企业台账和数据录入能力。
 
-页面包含两个工作区：
+本版已经实现知识库 PDF 中以下 7 个建设模块：统一身份认证、产业链智能匹配、园区对标与洽谈、本地化落地配套、招商材料与企业台账、单智能体与三类知识库、基础数据规范化处理。**不包含**国产化/内网安全基础适配，以及项目实施、培训和一年运维服务。
 
-- `招商咨询`：输入行业、企业或招商需求，生成行业概况、潜在匹配、产业链、区域配套、招商建议和使用边界。
-- `企业资料库`：按区县、产业赛道、产品和能力浏览资料，并打开每家企业的完整公开信息。
+## 一分钟启动
 
-## 启动
-
-本 Demo 使用 Conda 环境 `changzhou-rag-demo`。在 PowerShell 中进入此目录后运行：
+在 PowerShell 进入本目录后运行：
 
 ```powershell
 .\run_demo.ps1
 ```
 
-脚本会定位该 Conda 环境；若网页核心依赖缺失，会安装 `requirements.txt`。启动成功后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。按 `Ctrl+C` 停止服务。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。按 `Ctrl+C` 停止服务。
 
-首次使用可直接根据仓库中的环境文件创建环境：
+脚本使用 Conda 环境 `changzhou-rag-demo`，不使用仓库内的 `.venv`。新电脑可直接执行：
 
 ```powershell
 conda env create -f environment.yaml
 conda activate changzhou-rag-demo
 ```
 
-也可以手动启动：
+## 完整 Advanced RAG 模型准备
 
-```powershell
-conda activate changzhou-rag-demo
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-## 数据与本地检索
-
-企业资料应放在 `data/raw/`，其中至少包含：
+核心流程不需要任何云端 API 或密钥。需要完整检索链时，将两个已下载模型放到下列目录；模型与生成索引均被 Git 忽略。
 
 ```text
-companies.csv
-sources.csv
-regional_assets.jsonl
+models/
+  bge-m3/
+  bge-reranker-v2-m3/
 ```
 
-先校验资料，再构建检索索引：
+模型可用 Hugging Face 下载：
 
 ```powershell
 conda activate changzhou-rag-demo
-python scripts\validate_data.py --data-dir data
-python scripts\build_index.py --data-dir data
-```
-
-即使还没有下载 Embedding 模型，Demo 也能运行：它会使用本地确定性的词汇检索作为后备，并在页面状态中说明当前检索方式。
-
-若要启用已定下的 `BAAI/bge-m3`，先根据本机 CUDA/PyTorch 兼容性安装 GPU 版 PyTorch，再安装可选依赖、下载模型并构建索引：
-
-```powershell
-conda activate changzhou-rag-demo
-python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu126
-python -m pip install -r requirements-embedding.txt
 python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='BAAI/bge-m3', local_dir='models/bge-m3', ignore_patterns=['onnx/*', 'README.md', 'imgs/*', 'long.jpg', '.gitattributes'])"
-python scripts\build_index.py --data-dir data --embedding-backend bge-m3 --model-path models\bge-m3 --device cuda
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='BAAI/bge-reranker-v2-m3', local_dir='models/bge-reranker-v2-m3', ignore_patterns=['onnx/*', 'README.md', 'imgs/*', 'long.jpg', '.gitattributes'])"
+python scripts\build_index.py --data-dir data --embedding-backend bge-m3 --model-path models\bge-m3 --device cuda --batch-size 2 --max-length 768
 ```
 
-为适配 6 GB 显存的 RTX 3050，索引构建默认使用批大小 4、最大长度 512。生成的模型和索引保存在 `models/`、`data/derived/`，不会进入 Git。
+RTX 3050（6 GB）上已验证上述配置。没有本地模型时，系统会清楚标明检索/重排后备状态，绝不会把后备路径伪装成 BGE 或 Cross-Encoder。
 
-## 可选：DeepSeek V4 Flash 叙述生成
+## 查询架构
 
-没有模型密钥时，系统始终会生成本地、规则化且可追溯的报告。配置一个 OpenAI Chat Completions 兼容服务后，模型只会润色本次检索到的证据叙述；企业清单、来源卡片和匹配标签仍由本地数据决定。
-
-复制 `.env.example` 为 `.env`，再填写服务信息：
-
-```dotenv
-OPENCODEGO_API_KEY=你的密钥
-OPENCODEGO_BASE_URL=服务方提供的兼容接口根地址
-OPENCODEGO_MODEL=deepseek-v4-flash
+```text
+自然语言问题
+  └─ 轻量单智能体（仅允许固定工具计划）
+       ├─ 招商研判：Contextual Retrieval + SQLite FTS5/BM25 + BGE-M3
+       │             └─ RRF 融合 ──> BAAI Cross-Encoder 重排 ──> 可追溯证据卡
+       ├─ 产业关系：局部 SQLite Knowledge Graph / 最多两跳 GraphRAG
+       ├─ 精确筛选：参数化 SQL（不调用 RAG）
+       └─ 距离查询：SQLite RTree + Haversine + 本地道路系数估算（不调用 RAG）
 ```
 
-如希望密钥保留在一个本地文件而不写入 `.env`，可改为：
+单智能体联动三类核心知识库：`企业与产业链`、`园区招商洽谈`、`本地化落地配套`。页面会显示每次查询实际走过的工具和检索轨迹。
 
-```dotenv
-OPENCODEGO_KEY_FILE=相对或绝对的本地密钥文件路径
-OPENCODEGO_BASE_URL=服务方提供的兼容接口根地址
-OPENCODEGO_MODEL=deepseek-v4-flash
+## 页面与功能
+
+- `研判工作台`：自动/Hybrid/SQL/地理/图谱/园区/配套/项目综合七类路由；结果带来源链接、置信边界和执行轨迹。
+- `企业目录`：按区县、产业赛道和关键词查 100 家企业；核心标签涵盖产业、细分行业、产品、能力与产业链角色。
+- `园区对标`：展示多维公开指标、独资设立洽谈要点、`0–30 / 31–90 / 91–180 天` 分阶段参考方案。
+- `落地配套`：按“所选区县 + 常州市全域通用资料”生成政务办事、生活配套、交通区位配套包，显示适用范围、来源和核验日期。
+- `企业台账`：管理员和招商专员两级入口；管理员可见完整演示联系人字段，招商专员只见脱敏后的字段。
+- `数据管理`：管理员可先预检 UTF-8 CSV 的来源 ID、置信度、必填字段和大小限制，再发布有效行；也支持人工录入。所有可检索/导出文本在入库前识别并脱敏手机号、邮箱、身份证号，标准化后自动生成基础标签与可检索知识块。
+- `导出`：标准化靶向招商清单 CSV；三套预置材料模板（产业链靶向招商、独资设立园区洽谈、落地配套协同）的 DOCX/PPTX 导出。
+
+本地演示账号：
+
+| 角色 | 账号 | 密码 |
+| --- | --- | --- |
+| 招商专员 | `officer` | `officer-demo-2026` |
+| 管理员 | `admin` | `admin-demo-2026` |
+
+## 数据与使用边界
+
+- 原始资料位于 `data/raw/`。每条企业、园区和配套记录都保存 `source_id`，来源元数据保存在 `sources.csv`。
+- 企业坐标若没有可核验公开坐标，使用的是明确标识为 `district_reference` 的区县演示参考点，不是企业地址；“车程”是本地道路系数估算，不是实时导航。
+- 图谱中的 `potential` / `inferred` 边仅表示公开标签推导的待核验关联，不代表实际交易或合作。
+- 导出材料和页面结论均保留“潜在线索、需核验”的边界说明。
+- `data/derived/`（SQLite、向量索引）和 `data/exports/`（下载结果）是本机生成物，不提交 Git。
+- 正常更新 `data/raw/` 后重新启动时，原始资料会重建为新证据缓存，同时保留人工录入企业、台账、导入审核与导出审计；数据库不能一致性读取时会拒绝自动覆盖，保护已有记录。
+
+先检查原始数据，再手动重建索引：
+
+```powershell
+python scripts\validate_data.py --data-dir data --min-companies 100
+python scripts\build_index.py --data-dir data --embedding-backend bge-m3 --model-path models\bge-m3 --device cuda --batch-size 2 --max-length 768
 ```
 
-密钥文件内容可以是单个密钥、`OPENCODEGO_API_KEY=...` 一行，或首行是独立密钥、后面附使用说明的本地笔记。该文件仅由后端在启动时读取，不会发送给浏览器、写入日志或加入 Git。请勿把密钥写进前端 JavaScript、CSV 或公开资料文件。
+## 验收测试
 
-## 资料使用边界
+以下命令会在临时副本中重建真实 BGE-M3 索引、加载本地 Cross-Encoder，并执行 10 个端到端样例；不会污染 `data/raw/`：
 
-- 企业信息应来自可公开访问或已获授权的资料；每条企业记录至少保留一个来源链接。
-- 页面中的“潜在供应商 / 客户 / 合作方”只是基于产品、能力和产业链标签的初步线索，不代表企业间已有合作关系。
-- 缺少证据时，Demo 不会补全注册资本、认证、产能、驾车时间或实时工商状态。
-- 需要更新资料时，替换 `data/raw/` 中的文件并重新构建索引即可；网页服务会在下次请求时重新读取原始资料。
+```powershell
+python -m unittest -v tests.test_data_pipeline tests.test_platform_e2e
+```
+
+10 个样例覆盖：两级角色/脱敏、真实 Hybrid RAG、三知识库单智能体联动、SQL 精确筛选、地理 SQL、局部 GraphRAG、园区对标、三类配套包、三模板 DOCX/PPTX/CSV 导出、CSV 预检发布与人工录入，并回归检查动态向量增量、hash 后备标识、敏感信息清洗和刷新并发写入留存。
+
+## 目录说明
+
+```text
+app/
+  services/knowledge.py     SQLite、FTS、RTree、图谱、台账、导入
+  services/advanced_rag.py Contextual + Hybrid + RRF + Cross-Encoder
+  services/agent.py        受限工具计划的轻量单智能体
+  services/exports.py      CSV / DOCX / PPTX 三模板导出
+data/raw/                  可追溯的原始公开资料
+tests/test_platform_e2e.py 10 项端到端验收
+environment.yaml           可复现的 Conda 环境
+```
