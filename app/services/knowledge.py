@@ -63,6 +63,44 @@ DISTRICT_REFERENCE_POINTS: dict[str, tuple[float, float]] = {
     "常州市": (31.781, 119.974),
 }
 
+# The park data deliberately does not invent land, plant or incentive facts.
+# These dimensions turn the heterogeneous source cards into one transparent
+# comparison matrix: evidence coverage is a data-completeness aid, never an
+# investment-suitability or policy-preference score.
+PARK_BENCHMARK_DIMENSIONS: tuple[dict[str, str], ...] = (
+    {
+        "key": "industry_fit",
+        "label": "产业适配",
+        "metric_key": "sector_fit",
+        "definition": "公开资料中可见的产业话题/赛道适配；不代表准入结论。",
+    },
+    {
+        "key": "green_transition",
+        "label": "绿色低碳公开基础",
+        "metric_key": "near_zero_carbon_pilot",
+        "definition": "公开名单或指标中的绿色低碳线索；不代表项目可获支持。",
+    },
+    {
+        "key": "site_supply",
+        "label": "载体供给",
+        "metric_key": "site_supply",
+        "definition": "土地、厂房、接入等载体可用性，必须以园区实时书面核验为准。",
+    },
+    {
+        "key": "policy_basis",
+        "label": "政策与服务依据",
+        "metric_key": "policy_basis",
+        "definition": "公开政策或服务依据；不构成任何优惠、资金或审批承诺。",
+    },
+)
+
+PROJECT_TOPIC_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("新能源汽车与新能源", ("新能源", "汽车", "电池", "锂电", "储能", "光伏", "氢能"), ("项目备案与准入", "能耗与环评", "物流组织")),
+    ("新材料与化工新材料", ("新材料", "材料", "化工", "金属", "高分子"), ("项目备案与准入", "环保与安全条件", "物流组织")),
+    ("智能制造与高端装备", ("装备", "制造", "自动化", "机器人", "工业软件"), ("企业开办", "人才服务", "物流组织")),
+    ("生物医药与医疗器械", ("生物医药", "医疗", "器械", "药品", "诊断"), ("企业开办", "项目准入", "人才服务")),
+)
+
 
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -142,6 +180,19 @@ def redact_intake_text(value: Any) -> tuple[str, list[str]]:
         if count:
             redactions.append(label)
     return text, redactions
+
+
+def intake_identity(company_name: Any, source_id: Any) -> str:
+    """Normalize the minimum evidence identity used for duplicate warnings.
+
+    A published company may legitimately have a similar name from a different
+    source.  The import gate therefore only blocks an exact normalized
+    ``name + source`` repeat rather than trying to guess legal-entity identity.
+    """
+
+    name = re.sub(r"\s+", "", clean_text(company_name)).casefold()
+    source = clean_text(source_id).casefold()
+    return f"{name}|{source}" if name and source else ""
 
 
 class KnowledgeRepository:
@@ -756,6 +807,7 @@ class KnowledgeRepository:
             "capability": json_list(company.get("capabilities")),
             "input": json_list(company.get("input_materials")),
             "output": json_list(company.get("output_products")),
+            "customer": json_list(company.get("target_customer_industries")),
         }
         for tag_type, values_for_type in tags.items():
             for tag in values_for_type:
@@ -765,6 +817,8 @@ class KnowledgeRepository:
             f"知识库:企业与产业链；企业:{clean_text(company.get('company_name') or company.get('name'))}；区域:{district}；"
             f"产业:{clean_text(company.get('industry_track') or company.get('sector'))}；细分:{clean_text(company.get('industry_subtrack') or company.get('industry'))}；"
             f"产品:{'、'.join(json_list(company.get('products')))}；能力:{'、'.join(json_list(company.get('capabilities')))}；"
+            f"输入:{'、'.join(json_list(company.get('input_materials')))}；输出:{'、'.join(json_list(company.get('output_products')))}；"
+            f"目标客户行业:{'、'.join(json_list(company.get('target_customer_industries')))}；"
             f"角色:{'、'.join(json_list(company.get('supply_chain_role')))}；来源:{'、'.join(source_ids)}；"
             f"置信度:{clean_text(company.get('confidence') or 'medium')}"
         )
@@ -952,6 +1006,10 @@ class KnowledgeRepository:
         with self._connect() as connection:
             return {
                 "districts": [row[0] for row in connection.execute("SELECT DISTINCT district FROM companies WHERE status='published' AND district <> '' ORDER BY district")],
+                # The landing-page selector must not present an enterprise
+                # grouping for which the local-support corpus has no district
+                # record.  General company filters retain every raw district.
+                "landing_districts": ["常州市", *[row[0] for row in connection.execute("SELECT DISTINCT district FROM landing_services WHERE district <> '常州市' AND district <> '' ORDER BY district")]],
                 "sectors": [row[0] for row in connection.execute("SELECT DISTINCT sector FROM companies WHERE status='published' AND sector <> '' ORDER BY sector")],
                 "roles": [row[0] for row in connection.execute("SELECT DISTINCT tag_value FROM company_tags WHERE tag_type='role' ORDER BY tag_value")],
                 "parks": [dict(row) for row in connection.execute("SELECT park_id, name FROM parks ORDER BY name")],
@@ -1174,7 +1232,21 @@ class KnowledgeRepository:
         ]
         return {"nodes": nodes, "edges": edges, "max_hops": max_hops}
 
-    def compare_parks(self, park_ids: Iterable[str]) -> dict[str, Any]:
+    def compare_parks(
+        self,
+        park_ids: Iterable[str],
+        *,
+        sector: str | None = None,
+        project_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare parks through a fixed, evidence-first dimension matrix.
+
+        The returned percentage is deliberately an *evidence-completeness*
+        indicator.  It helps a招商人员 see what still needs to be verified; it
+        is not an investment score, a land-supply conclusion, or a policy
+        recommendation.
+        """
+
         self.ensure_ready()
         wanted = [clean_text(value) for value in park_ids if clean_text(value)]
         if not wanted:
@@ -1194,24 +1266,101 @@ class KnowledgeRepository:
             if reference
         }
         parks = [by_reference[reference] for reference in wanted if reference in by_reference]
+        requested_sector = clean_text(sector)
+        project_label = clean_text(project_name) or "本项目"
+        matrix_rows: list[dict[str, Any]] = []
+        pending_by_park: dict[str, list[str]] = {}
+        for park in parks:
+            dimensions: list[dict[str, Any]] = []
+            metrics_by_key = {clean_text(item.get("metric_key")): item for item in park.get("metrics", [])}
+            for definition in PARK_BENCHMARK_DIMENSIONS:
+                key = definition["key"]
+                if key == "industry_fit":
+                    sector_fit = list(park.get("sector_fit", []))
+                    matched = requested_sector in sector_fit if requested_sector else None
+                    evidence = metrics_by_key.get("sector_fit")
+                    source_ids = [clean_text(evidence.get("source_id"))] if evidence and clean_text(evidence.get("source_id")) else list(park.get("source_ids", []))
+                    status = "evidenced" if sector_fit else "pending_verification"
+                    value = "；".join(sector_fit) if sector_fit else "待向园区核验"
+                    dimensions.append(
+                        {
+                            **definition,
+                            "value": value,
+                            "status": status,
+                            "confidence": clean_text((evidence or {}).get("confidence")) or clean_text(park.get("confidence")) or "unknown",
+                            "source_ids": source_ids,
+                            "requested_sector_match": matched,
+                        }
+                    )
+                    continue
+                metric_keys = {
+                    "green_transition": ("near_zero_carbon_pilot",),
+                    "site_supply": ("site_supply", "land_factory", "plant_availability"),
+                    "policy_basis": ("policy_basis", "incentives"),
+                }[key]
+                metric = next((metrics_by_key[item] for item in metric_keys if item in metrics_by_key), None)
+                source_id = clean_text((metric or {}).get("source_id"))
+                confidence = clean_text((metric or {}).get("confidence")) or "unknown"
+                known = bool(metric and source_id and confidence.casefold() != "unknown")
+                dimensions.append(
+                    {
+                        **definition,
+                        "value": clean_text((metric or {}).get("value")) or "待向园区核验",
+                        "status": "evidenced" if known else "pending_verification",
+                        "confidence": confidence,
+                        "source_ids": [source_id] if source_id else [],
+                    }
+                )
+            evidenced = sum(1 for item in dimensions if item["status"] == "evidenced")
+            pending = [item["label"] for item in dimensions if item["status"] != "evidenced"]
+            pending_by_park[str(park["park_id"])] = pending
+            matrix_rows.append(
+                {
+                    "park_id": park["park_id"],
+                    "park_name": park["name"],
+                    "district": park.get("district", ""),
+                    "dimensions": dimensions,
+                    "evidence_completeness_percent": round(evidenced / max(1, len(dimensions)) * 100),
+                    "pending_dimensions": pending,
+                }
+            )
+        sector_matched = [row["park_name"] for row in matrix_rows if any(item.get("requested_sector_match") is True for item in row["dimensions"])]
+        negotiation_points = [
+            f"先确认{project_label}的主体、产品范围、环评/能耗条件与实际用地或厂房可得性；公开试点名单不构成供给或优惠承诺。",
+            "以项目投资强度、产能节奏、供应链协同、人才需求和物流方案形成双向信息清单，再进入条款沟通。",
+            "要求园区按公开口径补充审批路径、配套责任边界和可核验的支持政策依据。",
+        ]
+        if requested_sector:
+            if sector_matched:
+                negotiation_points.insert(1, f"公开产业话题与“{requested_sector}”相符的候选为：{'、'.join(sector_matched)}；仍需单独核验准入与承载条件。")
+            else:
+                negotiation_points.insert(1, f"当前公开资料未显示“{requested_sector}”的明确园区适配，应将产业准入列为首项待核验。")
+        pending_labels = sorted({label for labels in pending_by_park.values() for label in labels})
+        if pending_labels:
+            negotiation_points.append(f"本轮资料仍缺少：{'、'.join(pending_labels)}；这些维度不参与招商优先级判断。")
         return {
             "parks": parks,
-            "negotiation_points": [
-                "先确认项目主体、产品范围、环评/能耗条件与实际用地或厂房可得性；公开试点名单不构成供给或优惠承诺。",
-                "以项目投资强度、产能节奏、供应链协同、人才需求和物流方案形成双向信息清单，再进入条款沟通。",
-                "要求园区按公开口径补充审批路径、配套责任边界和可核验的支持政策依据。",
-            ],
+            "benchmark_model": {
+                "name": "公开证据多维对标矩阵",
+                "requested_sector": requested_sector or None,
+                "project_name": project_label,
+                "dimensions": [{key: value for key, value in item.items() if key != "metric_key"} for item in PARK_BENCHMARK_DIMENSIONS],
+                "rows": matrix_rows,
+                "score_interpretation": "资料完备度只统计有来源且非待核验的对标维度，不是招商优先级、项目准入或政策支持评分。",
+            },
+            "negotiation_points": negotiation_points,
             "phased_plan": [
-                {"phase": "0-30 天", "goal": "项目画像与合规前置核验", "actions": ["确认主体、产品与工艺", "核验准入和环保要求", "建立候选园区问题清单"]},
+                {"phase": "0-30 天", "goal": "项目画像与合规前置核验", "actions": [f"确认{project_label}主体、产品与工艺", "核验准入和环保要求", "按对标矩阵建立候选园区问题清单"]},
                 {"phase": "31-90 天", "goal": "选址与洽谈", "actions": ["园区现场踏勘", "核验地块/厂房和接入条件", "形成投资与配套责任边界"]},
                 {"phase": "91-180 天", "goal": "落地准备", "actions": ["推进企业设立与项目备案", "对接人才、物流和生活配套", "建立台账与节点复盘"]},
             ],
-            "caveat": "对标维度仅使用已入库公开资料；未知项保持“待核验”，不会生成土地、厂房或优惠承诺。",
+            "caveat": "对标维度仅使用已入库公开资料；未知项保持“待核验”，资料完备度不等于适配度，不会生成土地、厂房或优惠承诺。",
         }
 
     def landing_package(self, *, project_name: str, district: str | None = None) -> dict[str, Any]:
         self.ensure_ready()
         requested_district = clean_text(district) or "常州市"
+        project_label = clean_text(project_name) or "招商项目"
         with self._connect() as connection:
             # A district package may include citywide services, but it must not
             # silently present another district's local resource as applicable.
@@ -1240,6 +1389,69 @@ class KnowledgeRepository:
                 local_count += 1
                 item["scope"] = f"适用区域：{item_district}"
             services.setdefault(str(item["category"]), []).append(item)
+        project_lower = project_label.casefold()
+        topic_hits: list[dict[str, Any]] = []
+        for track, keywords, workstreams in PROJECT_TOPIC_RULES:
+            hits = [keyword for keyword in keywords if keyword.casefold() in project_lower]
+            if hits:
+                topic_hits.append({"track": track, "matched_keywords": hits, "workstreams": list(workstreams)})
+        workstreams = list(dict.fromkeys(stream for item in topic_hits for stream in item["workstreams"]))
+        if not workstreams:
+            workstreams = ["企业开办", "人才服务", "物流组织"]
+        tag_priorities = {
+            "企业开办": {"企业开办", "政务服务", "登记", "帮办代办", "行政审批"},
+            "项目备案与准入": {"政务服务", "行政审批", "登记"},
+            "项目准入": {"政务服务", "行政审批", "登记"},
+            "能耗与环评": {"政务服务", "行政审批"},
+            "环保与安全条件": {"政务服务", "行政审批"},
+            "人才服务": {"人才公寓", "住房", "人才服务", "教育", "医疗"},
+            "物流组织": {"航空货运", "物流", "交通"},
+        }
+        for category_items in services.values():
+            for item in category_items:
+                tags = set(item.get("tags", []))
+                matched_workstreams = [
+                    workstream
+                    for workstream in workstreams
+                    if tags & tag_priorities.get(workstream, set())
+                ]
+                item["project_relevance"] = {
+                    "priority": "高" if matched_workstreams else "常规",
+                    "matched_workstreams": matched_workstreams,
+                    "reason": "项目名称画像与服务标签匹配" if matched_workstreams else "作为项目通用落地核验资料保留",
+                }
+            category_items.sort(key=lambda item: (item["project_relevance"]["priority"] != "高", item["name"]))
+        checklist_definitions = (
+            ("企业开办", "政务办事", "0-30 天", "企业/属地政务服务窗口", "核验企业设立、主题服务入口及材料清单。"),
+            ("项目备案与准入", "政务办事", "0-30 天", "企业/属地主管部门", "核验项目备案、准入边界及办理条件。"),
+            ("项目准入", "政务办事", "0-30 天", "企业/属地主管部门", "核验行业准入、许可和项目申报边界。"),
+            ("能耗与环评", "政务办事", "0-30 天", "企业/属地主管部门", "核验环评、能耗和安全条件；本系统不作审批结论。"),
+            ("环保与安全条件", "政务办事", "0-30 天", "企业/属地主管部门", "核验环保、安全及配套责任边界；本系统不作审批结论。"),
+            ("人才服务", "生活配套", "31-90 天", "企业/属地人才服务窗口", "核验人才居住、教育、医疗等实际资格、房源和服务条件。"),
+            ("物流组织", "交通区位", "31-90 天", "企业/物流服务商", "按货物属性核验运输方式、时效、价格与承运限制。"),
+        )
+        action_checklist: list[dict[str, Any]] = []
+        for workstream in workstreams:
+            definition = next((item for item in checklist_definitions if item[0] == workstream), None)
+            if not definition:
+                continue
+            _, category, phase, owner, action = definition
+            supporting = [
+                item for item in services.get(category, [])
+                if workstream in item.get("project_relevance", {}).get("matched_workstreams", [])
+            ]
+            action_checklist.append(
+                {
+                    "workstream": workstream,
+                    "category": category,
+                    "priority": "高",
+                    "phase": phase,
+                    "suggested_owner": owner,
+                    "action": action,
+                    "supporting_service_ids": [item["service_id"] for item in supporting],
+                    "evidence_status": "有公开入口资料" if supporting else "待向属地补充公开或窗口资料",
+                }
+            )
         localization_note = (
             f"已按“{requested_district} + 常州市全域通用资料”筛选：{local_count} 条属地资料、"
             f"其中 {citywide_count} 条为市级通用资料。"
@@ -1247,7 +1459,7 @@ class KnowledgeRepository:
             else "已按常州市全域范围组织资料；如需区县窗口、房源或具体交通节点，请在下一轮向属地主管部门核验。"
         )
         return {
-            "project_name": project_name,
+            "project_name": project_label,
             "district": requested_district,
             "sections": [{"category": key, "items": value} for key, value in services.items()],
             "localization": {
@@ -1257,6 +1469,17 @@ class KnowledgeRepository:
                 "filter": "district = requested district OR 常州市",
             },
             "localization_note": localization_note,
+            "execution": {
+                "engine": "parameterized SQLite landing-service query",
+                "rag_called": False,
+                "method": "区县精确过滤 + 项目画像关键词与服务标签排序",
+            },
+            "customization": {
+                "method": "项目名称关键词画像 + 服务标签排序；不使用 RAG，不将关键词推断当作审批或政策事实。",
+                "topic_hits": topic_hits,
+                "workstreams": workstreams,
+            },
+            "action_checklist": action_checklist,
             "note": "配套包用于下一轮核验与责任分工；项目资格、可用资源和办理条件应以属地主管部门的最新答复为准。",
         }
 
@@ -1404,6 +1627,12 @@ class KnowledgeRepository:
             raise ValueError("CSV 没有数据行")
         with self._connect() as connection:
             known_sources = {str(row[0]) for row in connection.execute("SELECT source_id FROM sources")}
+            existing_identities = {
+                intake_identity(row["name"], source_id)
+                for row in connection.execute("SELECT name, source_ids FROM companies WHERE status='published'").fetchall()
+                for source_id in json_list(row["source_ids"])
+            }
+            batch_identities: set[str] = set()
             import_id = uuid.uuid4().hex
             connection.execute("INSERT INTO import_jobs VALUES (?, ?, 'staged', ?, ?, NULL)", (import_id, actor, filename, utc_now()))
             report_rows = []
@@ -1431,6 +1660,13 @@ class KnowledgeRepository:
                     errors.append("企业名称和来源 ID 不得包含个人敏感信息")
                 if normalized["confidence"] not in {"high", "medium", "low"}:
                     errors.append("confidence 必须为 high、medium 或 low")
+                identity = intake_identity(normalized["company_name"], normalized["source_id"])
+                if identity and identity in existing_identities:
+                    errors.append("企业名称与来源 ID 已存在于已发布资料，请核验是否重复导入")
+                elif identity and identity in batch_identities:
+                    errors.append("CSV 内存在相同企业名称与来源 ID 的重复行")
+                if identity:
+                    batch_identities.add(identity)
                 valid = not errors
                 connection.execute(
                     "INSERT INTO import_rows VALUES (?, ?, ?, ?, ?, NULL)",
@@ -1479,6 +1715,10 @@ class KnowledgeRepository:
             known = connection.execute("SELECT 1 FROM sources WHERE source_id=?", (normalized["source_id"],)).fetchone()
             if not known:
                 raise ValueError("来源 ID 不存在")
+            identity = intake_identity(normalized["company_name"], normalized["source_id"])
+            existing = connection.execute("SELECT name, source_ids FROM companies WHERE status='published'").fetchall()
+            if identity and any(identity == intake_identity(row["name"], source_id) for row in existing for source_id in json_list(row["source_ids"])):
+                raise ValueError("企业名称与来源 ID 已存在于已发布资料，请核验是否重复录入")
             normalized["company_id"] = f"MAN-{uuid.uuid4().hex[:8].upper()}"
             normalized["verified_date"] = datetime.now().date().isoformat()
             company_id = self._insert_company(connection, normalized, status="published")
@@ -1509,6 +1749,9 @@ class KnowledgeRepository:
             "supply_chain_role": pick("supply_chain_role", "supply_chain_role", "产业链角色"),
             "products": pick("products", "products", "产品"),
             "capabilities": pick("capabilities", "capabilities", "能力"),
+            "input_materials": pick("input_materials", "input_materials", "输入材料"),
+            "output_products": pick("output_products", "output_products", "输出产品"),
+            "target_customer_industries": pick("target_customer_industries", "target_customer_industries", "目标客户行业"),
             "summary": pick("summary", "summary", "简介", "description"),
             "source_id": pick("source_id", "source_id", "来源ID"),
             "confidence": pick("confidence", "confidence", "可信度") or "medium",

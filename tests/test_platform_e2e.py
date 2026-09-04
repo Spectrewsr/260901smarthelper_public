@@ -140,6 +140,21 @@ class PlatformAcceptanceTests(unittest.TestCase):
         self.assertEqual(officer_created.status_code, 200, officer_created.text)
         self.assertEqual(officer_created.json()["contact_phone"], "138****8123")
         self.assertEqual(officer_created.json()["contact_email"], "l***@example.test")
+
+        # The electronic ledger is a working follow-up record rather than an
+        # append-only demo list: either authorized role can update its public
+        # follow-up fields and the change becomes an auditable timeline event.
+        updated = self.client.patch(
+            f"/api/ledgers/{ledger_id}",
+            headers=self.officer_headers,
+            json={"stage": "重点跟进", "owner": "招商专员", "next_step": "预约技术沟通并核验产能"},
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["stage"], "重点跟进")
+        self.assertEqual(updated.json()["contact_phone"], "139****1111")
+        self.assertEqual(updated.json()["events"][-1]["event_type"], "updated")
+        self.assertEqual(updated.json()["events"][-1]["actor"], "officer")
+
         missing = self.client.patch(
             "/api/ledgers/999999",
             headers=self.officer_headers,
@@ -168,6 +183,10 @@ class PlatformAcceptanceTests(unittest.TestCase):
         self.assertFalse(trace["reranker"]["fallback"])
         self.assertTrue(result["sources"])
         self.assertTrue(result["matches"]["all_matches"])
+        first_match = result["matches"]["all_matches"][0]
+        self.assertTrue(first_match["match_evidence"])
+        self.assertIn("公开标签包含", first_match["match_reason"])
+        self.assertTrue(any(item["field"] in {"产品", "能力", "产业链角色"} for item in first_match["match_evidence"]))
 
     def test_03_lightweight_agent_joins_three_knowledge_bases(self) -> None:
         """A project question uses the bounded three-tool execution plan."""
@@ -185,8 +204,24 @@ class PlatformAcceptanceTests(unittest.TestCase):
         self.assertEqual([item["tool"] for item in result["execution"]["tool_calls"]], ["hybrid_rag", "park_compare", "landing_package"])
         self.assertTrue(result["execution"]["rag_called"])
         self.assertEqual(len(result["park_comparison"]["parks"]), 3)
+        self.assertEqual(len(result["park_comparison"]["benchmark_model"]["rows"]), 3)
+        self.assertTrue(result["landing_package"]["action_checklist"])
+        self.assertIn("新能源汽车与新能源", [item["track"] for item in result["landing_package"]["customization"]["topic_hits"]])
         categories = {item["category"] for item in result["landing_package"]["sections"]}
         self.assertEqual(categories, {"政务办事", "生活配套", "交通区位"})
+
+        auto_result = self._query(
+            {
+                "query": "在常州独资布局新能源项目，怎样选园区并准备落地？",
+                "district": "金坛区",
+                "sector": "新能源汽车与新能源",
+                "mode": "auto",
+                "park_ids": ["P001", "P002", "P003"],
+                "project_name": "新能源项目",
+            }
+        )
+        self.assertEqual(auto_result["execution"]["mode"], "agentic_project")
+        self.assertEqual([item["tool"] for item in auto_result["execution"]["tool_calls"]], ["hybrid_rag", "park_compare", "landing_package"])
 
     def test_04_exact_structured_sql_bypasses_rag(self) -> None:
         """Exact district/track query has a stable SQL result set and no RAG trace."""
@@ -235,16 +270,32 @@ class PlatformAcceptanceTests(unittest.TestCase):
 
     def test_07_park_comparison_supports_asset_aliases_and_phased_plan(self) -> None:
         """The park view provides comparison facts, negotiation prompts and a staged plan."""
-        response = self.client.get("/api/parks/compare?park_ids=A002,A003,A005")
+        response = self.client.get("/api/parks/compare?park_ids=A002,A003,A005&sector=%E6%96%B0%E8%83%BD%E6%BA%90%E6%B1%BD%E8%BD%A6%E4%B8%8E%E6%96%B0%E8%83%BD%E6%BA%90&project_name=%E6%96%B0%E8%83%BD%E6%BA%90%E9%A1%B9%E7%9B%AE")
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
         self.assertEqual([item["park_id"] for item in result["parks"]], ["P003", "P001", "P002"])
         self.assertTrue(all(item["sources"] and item["metrics"] for item in result["parks"]))
+        model = result["benchmark_model"]
+        self.assertEqual(model["requested_sector"], "新能源汽车与新能源")
+        self.assertEqual([item["key"] for item in model["dimensions"]], ["industry_fit", "green_transition", "site_supply", "policy_basis"])
+        self.assertEqual(len(model["rows"]), 3)
+        for row in model["rows"]:
+            self.assertEqual(len(row["dimensions"]), 4)
+            self.assertTrue(any(item["status"] == "pending_verification" for item in row["dimensions"]))
+            self.assertEqual(row["evidence_completeness_percent"], 50)
+        self.assertIn("不是招商优先级", model["score_interpretation"])
+        self.assertTrue(any("新能源汽车与新能源" in item for item in result["negotiation_points"]))
         self.assertEqual([item["phase"] for item in result["phased_plan"]], ["0-30 天", "31-90 天", "91-180 天"])
         self.assertIn("待核验", result["caveat"])
 
     def test_08_landing_package_has_government_life_and_transport_evidence(self) -> None:
         """Landing package keeps all three local-service categories and their public sources."""
+        options = self.client.get("/api/filter-options")
+        self.assertEqual(options.status_code, 200, options.text)
+        self.assertEqual(
+            set(options.json()["landing_districts"]),
+            {"常州市", "金坛区", "武进区", "新北区", "天宁区", "钟楼区", "溧阳市", "常州经开区"},
+        )
         response = self.client.get("/api/landing/package?project_name=%E6%96%B0%E8%83%BD%E6%BA%90%E9%A1%B9%E7%9B%AE&district=%E9%87%91%E5%9D%9B%E5%8C%BA")
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
@@ -257,7 +308,35 @@ class PlatformAcceptanceTests(unittest.TestCase):
             self.assertTrue(all(item.get("scope") for item in items))
         self.assertEqual(result["localization"]["requested_district"], "金坛区")
         self.assertEqual(result["localization"]["filter"], "district = requested district OR 常州市")
+        self.assertEqual(result["localization"]["local_item_count"], 3)
+        self.assertEqual(result["localization"]["citywide_item_count"], 5)
+        self.assertFalse(result["execution"]["rag_called"])
+        self.assertIn("SQLite", result["execution"]["engine"])
+        self.assertTrue(result["customization"]["topic_hits"])
+        self.assertIn("项目备案与准入", result["customization"]["workstreams"])
+        self.assertTrue(all(item["priority"] == "高" for item in result["action_checklist"]))
+        self.assertTrue(any(item["supporting_service_ids"] for item in result["action_checklist"]))
         self.assertIn("金坛区", result["localization_note"])
+
+        # Every district/function zone used by the 100-company catalogue has
+        # one local, source-labelled record for each of the three categories.
+        # Citywide material may supplement it, but cannot be the only result.
+        expected_districts = ("金坛区", "武进区", "新北区", "天宁区", "钟楼区", "溧阳市", "常州经开区")
+        for district in expected_districts:
+            local_response = self.client.get(
+                f"/api/landing/package?project_name=%E6%96%B0%E8%83%BD%E6%BA%90%E9%A1%B9%E7%9B%AE&district={district}"
+            )
+            self.assertEqual(local_response.status_code, 200, local_response.text)
+            local_package = local_response.json()
+            local_items = [
+                item
+                for section in local_package["sections"]
+                for item in section["items"]
+                if item["district"] == district
+            ]
+            self.assertEqual(len(local_items), 3, district)
+            self.assertEqual({item["category"] for item in local_items}, {"政务办事", "生活配套", "交通区位"})
+            self.assertTrue(all(item["sources"] and item["scope"] for item in local_items))
 
     def test_09_templates_docx_pptx_and_target_list_are_real_files(self) -> None:
         """Three preset material templates, DOCX/PPTX and a standard target list are downloadable."""
@@ -270,28 +349,36 @@ class PlatformAcceptanceTests(unittest.TestCase):
         self.assertIn("企业名称".encode("utf-8"), csv_response.content)
         self.assertIn("C004".encode("utf-8"), csv_response.content)
 
-        docx_response = self.client.post(
-            "/api/exports/material",
-            headers=self.admin_headers,
-            json={"company_ids": ["C004", "C006"], "project_name": "新能源项目", "format": "docx", "template_key": "park"},
-        )
-        self.assertEqual(docx_response.status_code, 200, docx_response.text)
-        self.assertTrue(docx_response.content.startswith(b"PK"))
-        with zipfile.ZipFile(__import__("io").BytesIO(docx_response.content)) as archive:
-            document_xml = archive.read("word/document.xml").decode("utf-8")
-        self.assertIn("蜂巢", document_xml)
-        self.assertIn("独资设立园区洽谈", document_xml)
+        expected_titles = {
+            "chain": "产业链靶向招商",
+            "park": "独资设立园区洽谈",
+            "landing": "落地配套协同",
+        }
+        for template_key, expected_title in expected_titles.items():
+            docx_response = self.client.post(
+                "/api/exports/material",
+                headers=self.admin_headers,
+                json={"company_ids": ["C004", "C006"], "project_name": "新能源项目", "format": "docx", "template_key": template_key},
+            )
+            self.assertEqual(docx_response.status_code, 200, docx_response.text)
+            self.assertTrue(docx_response.content.startswith(b"PK"))
+            with zipfile.ZipFile(__import__("io").BytesIO(docx_response.content)) as archive:
+                document_xml = archive.read("word/document.xml").decode("utf-8")
+            self.assertIn("蜂巢", document_xml)
+            self.assertIn(expected_title, document_xml)
+            self.assertIn("来源索引", document_xml)
 
-        pptx_response = self.client.post(
-            "/api/exports/material",
-            headers=self.admin_headers,
-            json={"company_ids": ["C004", "C006"], "project_name": "新能源项目", "format": "pptx", "template_key": "landing"},
-        )
-        self.assertEqual(pptx_response.status_code, 200, pptx_response.text)
-        self.assertTrue(pptx_response.content.startswith(b"PK"))
-        with zipfile.ZipFile(__import__("io").BytesIO(pptx_response.content)) as archive:
-            texts = "".join(archive.read(name).decode("utf-8") for name in archive.namelist() if name.startswith("ppt/slides/slide"))
-        self.assertIn("落地配套协同", texts)
+            pptx_response = self.client.post(
+                "/api/exports/material",
+                headers=self.admin_headers,
+                json={"company_ids": ["C004", "C006"], "project_name": "新能源项目", "format": "pptx", "template_key": template_key},
+            )
+            self.assertEqual(pptx_response.status_code, 200, pptx_response.text)
+            self.assertTrue(pptx_response.content.startswith(b"PK"))
+            with zipfile.ZipFile(__import__("io").BytesIO(pptx_response.content)) as archive:
+                texts = "".join(archive.read(name).decode("utf-8") for name in archive.namelist() if name.startswith("ppt/slides/slide"))
+            self.assertIn(expected_title, texts)
+            self.assertIn("来源索引", texts)
 
     def test_10_csv_preflight_review_publish_and_manual_intake(self) -> None:
         """Admin-only intake validates/cleans data, updates dense retrieval, and preserves operations on raw refresh."""
@@ -322,6 +409,16 @@ class PlatformAcceptanceTests(unittest.TestCase):
         self.assertEqual(published.status_code, 200, published.text)
         self.assertEqual(len(published.json()["published_company_ids"]), 1)
 
+        duplicate_preview = self.client.post(
+            "/api/admin/imports/preview",
+            headers=self.admin_headers,
+            files={"file": ("duplicate.csv", b"company_name,source_id,confidence\n\xe9\xaa\x8c\xe6\x94\xb6\xe7\xa4\xba\xe4\xbe\x8b\xe6\x9d\x90\xe6\x96\x99\xe4\xbc\x81\xe4\xb8\x9a,S001,medium\n", "text/csv")},
+        )
+        self.assertEqual(duplicate_preview.status_code, 200, duplicate_preview.text)
+        duplicate_row = duplicate_preview.json()["rows"][0]
+        self.assertFalse(duplicate_row["valid"])
+        self.assertTrue(any("重复导入" in item for item in duplicate_row["errors"]))
+
         manual = self.client.post(
             "/api/admin/companies",
             headers=self.admin_headers,
@@ -334,6 +431,9 @@ class PlatformAcceptanceTests(unittest.TestCase):
                 "supply_chain_role": "潜在合作方",
                 "products": "动态稠密索引验收材料/13800138123",
                 "capabilities": "数据治理",
+                "input_materials": "锂盐",
+                "output_products": "电池材料",
+                "target_customer_industries": "新能源汽车",
                 "summary": "人工录入的可追溯演示资料。",
                 "confidence": "low",
             },
@@ -341,8 +441,33 @@ class PlatformAcceptanceTests(unittest.TestCase):
         self.assertEqual(manual.status_code, 200, manual.text)
         manual_company_id = manual.json()["company_id"]
         self.assertTrue(manual_company_id.startswith("MAN-"))
+        self.assertIn("潜在合作方", manual.json()["supply_chain_role"])
+        self.assertIn("数据治理", manual.json()["capabilities"])
+        self.assertIn("锂盐", manual.json()["input_materials"])
+        self.assertIn("电池材料", manual.json()["output_products"])
+        self.assertIn("新能源汽车", manual.json()["target_customer_industries"])
+        with self.main.app.state.repository._connect() as connection:
+            manual_tags = {
+                (str(row["tag_type"]), str(row["tag_value"]))
+                for row in connection.execute("SELECT tag_type, tag_value FROM company_tags WHERE company_id=?", (manual_company_id,))
+            }
+        self.assertTrue({("role", "潜在合作方"), ("capability", "数据治理"), ("input", "锂盐"), ("output", "电池材料"), ("customer", "新能源汽车")}.issubset(manual_tags))
         self.assertTrue(any("[已脱敏手机号]" in product for product in manual.json()["products"]))
         self.assertNotIn("13800138123", json.dumps(manual.json(), ensure_ascii=False))
+
+        # Newly exposed input/output/customer tags are not merely stored: the
+        # match explanation shows the directly matched field and the local
+        # grouping uses input as a downstream-demand clue and output as an
+        # upstream-supply clue.
+        from app.services.agent import InvestmentAgent
+
+        input_match = InvestmentAgent._match_groups([manual.json()], "锂盐")
+        self.assertEqual(input_match["customers"][0]["company_id"], manual_company_id)
+        self.assertTrue(any(item["field"] == "输入材料" and item["direct_hit"] for item in input_match["all_matches"][0]["match_evidence"]))
+        self.assertIn("输入材料：锂盐", input_match["all_matches"][0]["match_reason"])
+        output_match = InvestmentAgent._match_groups([manual.json()], "电池材料")
+        self.assertEqual(output_match["suppliers"][0]["company_id"], manual_company_id)
+        self.assertTrue(any(item["field"] == "输出产品" and item["direct_hit"] for item in output_match["all_matches"][0]["match_evidence"]))
         prohibited_name = self.client.post(
             "/api/admin/companies",
             headers=self.admin_headers,

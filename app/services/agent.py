@@ -50,7 +50,7 @@ class InvestmentAgent:
         if selected_mode == "graph":
             return self._graph_response(query, district=district, sector=sector, company_ids=company_ids, plan=plan)
         if selected_mode == "park":
-            comparison = self.repository.compare_parks(park_ids or [])
+            comparison = self.repository.compare_parks(park_ids or [], sector=sector or self._sector_from_query(query), project_name=project_name or query)
             return {
                 "query": query,
                 "execution": {"mode": "park_compare", "rag_called": False, "tool_calls": plan},
@@ -165,7 +165,7 @@ class InvestmentAgent:
         plan: list[dict[str, str]],
     ) -> dict[str, Any]:
         hybrid = self._hybrid_response(query, district=district, sector=sector, plan=plan[:1])
-        comparison = self.repository.compare_parks(park_ids or [])
+        comparison = self.repository.compare_parks(park_ids or [], sector=sector or self._sector_from_query(query), project_name=project_name or query)
         package = self.repository.landing_package(project_name=project_name or query, district=district)
         sources = self._unique_sources([
             *hybrid["sources"],
@@ -277,14 +277,57 @@ class InvestmentAgent:
         customers: list[dict[str, Any]] = []
         partners: list[dict[str, Any]] = []
         all_matches: list[dict[str, Any]] = []
+        query_lower = query.casefold()
         for source in companies:
             company = dict(source)
-            text = " ".join([company.get("industry", ""), *company.get("products", []), *company.get("supply_chain_role", [])])
-            company["match_reason"] = "公开资料中的产品、能力、产业链角色与本次需求存在潜在关联；不代表已建立合作。"
+            roles = list(company.get("supply_chain_role", []))
+            products = list(company.get("products", []))
+            inputs = list(company.get("input_materials", []))
+            outputs = list(company.get("output_products", []))
+            target_customers = list(company.get("target_customer_industries", []))
+            text = " ".join([company.get("industry", ""), *products, *roles, *inputs, *outputs, *target_customers])
+            evidence_fields = (
+                ("产业赛道", [company.get("sector", "")]),
+                ("细分行业", [company.get("industry", "")]),
+                ("产品", products),
+                ("能力", list(company.get("capabilities", []))),
+                ("产业链角色", roles),
+                ("输入材料", inputs),
+                ("输出产品", outputs),
+                ("目标客户行业", target_customers),
+            )
+            direct_hits: list[str] = []
+            evidence: list[dict[str, Any]] = []
+            for label, values in evidence_fields:
+                usable = [str(value) for value in values if str(value).strip()]
+                hits = [value for value in usable if len(value) >= 2 and value.casefold() in query_lower]
+                shown = hits or usable[:2]
+                if shown:
+                    evidence.append({"field": label, "values": shown, "direct_hit": bool(hits)})
+                    if hits:
+                        direct_hits.extend(f"{label}：{value}" for value in hits)
+            # Directly matched fields must be visible in the user-facing
+            # rationale even if they occur after the general sector fields.
+            visible_evidence = sorted(evidence, key=lambda item: not item["direct_hit"])[:3]
+            readable = "；".join(
+                f"{item['field']}：{'、'.join(item['values'])}" for item in visible_evidence
+            ) or "该企业的公开资料标签"
+            matched = f"直接命中：{'、'.join(direct_hits[:3])}；" if direct_hits else ""
+            company["match_evidence"] = evidence
+            company["match_reason"] = f"{matched}公开标签包含{readable}，与本次需求形成潜在线索；不代表已建立合作。"
             company["match_type"] = "potential"
-            if any(token in text for token in ("材料", "正极", "负极", "供应")):
+            supplier_text = " ".join([*roles, *products, *outputs])
+            customer_text = " ".join([*roles, *inputs, *target_customers, company.get("industry", "")])
+            direct_input_hit = any(item["field"] == "输入材料" and item["direct_hit"] for item in evidence)
+            direct_output_hit = any(item["field"] == "输出产品" and item["direct_hit"] for item in evidence)
+            if direct_input_hit and not direct_output_hit:
+                # The company publicly lists the query material as an input,
+                # so it is a potential downstream demand lead for that exact
+                # material rather than automatically a supplier of it.
+                customers.append(company)
+            elif direct_output_hit or any(token in supplier_text for token in ("上游", "材料", "正极", "负极", "供应", "零部件")):
                 suppliers.append(company)
-            elif any(token in text for token in ("整车", "汽车", "应用", "客户")):
+            elif inputs or any(token in customer_text for token in ("下游", "整车", "汽车", "应用", "客户")):
                 customers.append(company)
             else:
                 partners.append(company)

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="常州产业招商知识平台：本地 Advanced RAG、SQL 地理查询与可追溯招商协同演示。">
   <title>常州产业招商知识平台 · 本地演示</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v={{ asset_version }}">
 </head>
 <body>
   <a class="skip-link" href="#workspace">跳到工作台</a>
@@ -20,8 +20,8 @@
         <button class="nav-item" data-view="directory" type="button"><span>▦</span>企业与产业链</button>
         <button class="nav-item" data-view="parks" type="button"><span>◫</span>园区对标</button>
         <button class="nav-item" data-view="landing" type="button"><span>⌁</span>落地配套</button>
-        <button class="nav-item auth-only" data-view="ledger" type="button"><span>▤</span>企业对接台账</button>
-        <button class="nav-item admin-only" data-view="data" type="button"><span>⊞</span>知识与数据管理</button>
+        <button class="nav-item auth-only" data-view="ledger" type="button" hidden><span>▤</span>企业对接台账</button>
+        <button class="nav-item admin-only" data-view="data" type="button" hidden><span>⊞</span>知识与数据管理</button>
       </nav>
       <section class="architecture-card" aria-label="检索架构">
         <p>RETRIEVAL PIPELINE</p>
@@ -83,7 +83,12 @@
 
       <section id="parks" class="view" hidden aria-labelledby="parksTitle">
         <div class="page-heading"><div><p class="eyebrow">园区与招商对标库</p><h2 id="parksTitle">公开事实对标与独资洽谈支持</h2><p>未知值保留为待核验，不生成土地、厂房或优惠承诺。</p></div></div>
-        <div class="panel toolbar"><label><span>选择园区（可逗号分隔 ID）</span><input id="parkIds" value="P001,P002,P003"></label><button id="compareParks" class="primary-button" type="button">生成园区对标</button></div>
+        <div class="panel toolbar">
+          <label><span>选择园区（可逗号分隔 ID）</span><input id="parkIds" value="P001,P002,P003"></label>
+          <label><span>产业赛道</span><select id="parkSector"><option value="">不限定赛道</option></select></label>
+          <label><span>项目名称</span><input id="parkProjectName" value="新能源项目" maxlength="160"></label>
+          <button id="compareParks" class="primary-button" type="button">生成园区对标</button>
+        </div>
         <div id="parkResults" class="content-grid"></div>
       </section>
 
@@ -102,15 +107,16 @@
       <section id="data" class="view" hidden aria-labelledby="dataTitle">
         <div class="page-heading"><div><p class="eyebrow">知识与数据管理</p><h2 id="dataTitle">批量预检、审核发布与人工录入</h2><p>管理员专用；来源 ID 必填，未知来源不会发布。</p></div></div>
         <div id="adminGate" class="login-gate panel"><h3>需要管理员权限</h3><p>请以管理员账号登录。</p></div>
-        <div id="adminWorkspace" hidden class="data-workspace"><section class="panel"><h3>CSV 批量导入预检</h3><p>要求 UTF-8 CSV，至少包含 <code>company_name</code>、<code>source_id</code>、<code>confidence</code>。</p><input id="importFile" type="file" accept=".csv"><button id="previewImport" class="secondary-button" type="button">预检文件</button><div id="importResults"></div></section><section class="panel"><h3>人工录入</h3><form id="manualCompanyForm" class="form-grid"><label><span>企业名称</span><input name="company_name" required></label><label><span>来源 ID</span><input name="source_id" value="S001" required></label><label><span>区域</span><input name="district" value="常州市"></label><label><span>产业赛道</span><input name="industry_track"></label><label><span>细分行业</span><input name="industry_subtrack"></label><label><span>可信度</span><select name="confidence"><option>medium</option><option>high</option><option>low</option></select></label><label class="wide"><span>产品（以逗号分隔）</span><input name="products"></label><label class="wide"><span>公开简介</span><textarea name="summary" rows="3"></textarea></label><button class="primary-button" type="submit">保存并发布</button></form></section></div>
+        <div id="adminWorkspace" hidden class="data-workspace"><section class="panel"><h3>CSV 批量导入预检</h3><p>要求 UTF-8 CSV，至少包含 <code>company_name</code>、<code>source_id</code>、<code>confidence</code>。</p><input id="importFile" type="file" accept=".csv"><button id="previewImport" class="secondary-button" type="button">预检文件</button><div id="importResults"></div></section><section class="panel"><h3>人工录入</h3><p>产品、能力、输入输出和产业链角色会写入企业标签库。请只填写可追溯的公开资料，系统会在入库前识别常见个人敏感信息。</p><form id="manualCompanyForm" class="form-grid"><label><span>企业名称</span><input name="company_name" required></label><label><span>来源 ID</span><input name="source_id" value="S001" required></label><label><span>区域</span><input name="district" value="常州市"></label><label><span>产业赛道</span><input name="industry_track"></label><label><span>细分行业</span><input name="industry_subtrack"></label><label><span>产业链角色（以逗号分隔）</span><input name="supply_chain_role" placeholder="例如：潜在上游供应商"></label><label><span>输入材料（以逗号分隔）</span><input name="input_materials"></label><label><span>输出产品（以逗号分隔）</span><input name="output_products"></label><label><span>目标客户行业（以逗号分隔）</span><input name="target_customer_industries"></label><label class="wide"><span>产品（以逗号分隔）</span><input name="products"></label><label class="wide"><span>能力（以逗号分隔）</span><input name="capabilities" placeholder="例如：电池材料、自动化产线"></label><label><span>可信度</span><select name="confidence"><option>medium</option><option>high</option><option>low</option></select></label><label class="wide"><span>公开简介</span><textarea name="summary" rows="3"></textarea></label><label class="wide"><span>备注</span><textarea name="notes" rows="2" placeholder="仅填写与公开来源相关的核验备注"></textarea></label><button class="primary-button" type="submit">保存并发布</button></form></section></div>
       </section>
     </main>
   </div>
 
   <dialog id="loginDialog" class="login-dialog"><button id="closeLogin" class="dialog-close" type="button" aria-label="关闭">×</button><p class="eyebrow">统一系统入口</p><h2>本地演示登录</h2><p>账号仅用于演示权限与字段脱敏，不会连接外部身份系统。</p><form id="loginForm"><label>账号<input id="loginUsername" value="officer" required></label><label>密码<input id="loginPassword" type="password" value="officer-demo-2026" required></label><button class="primary-button" type="submit">登录</button></form><div class="demo-account"><strong>演示账号</strong><span>招商专员：officer / officer-demo-2026</span><span>管理员：admin / admin-demo-2026</span></div><p id="loginFeedback" class="form-feedback" aria-live="polite"></p></dialog>
   <dialog id="companyDialog" class="company-dialog"><button id="closeCompany" class="dialog-close" type="button" aria-label="关闭">×</button><div id="companyDialogBody"></div></dialog>
+  <dialog id="ledgerDetailDialog" class="ledger-dialog"><button id="closeLedgerDetail" class="dialog-close" type="button" aria-label="关闭">×</button><div id="ledgerDetailBody"></div></dialog>
   <dialog id="acceptanceDialog" class="acceptance-dialog"><button id="closeAcceptance" class="dialog-close" type="button" aria-label="关闭">×</button><div id="acceptanceBody"></div></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+  <script defer src="{{ url_for('static', path='app.js') }}?v={{ asset_version }}"></script>
 </body>
 </html>

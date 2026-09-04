@@ -24,6 +24,13 @@ MAX_IMPORT_BYTES = 5 * 1024 * 1024
 load_dotenv(PROJECT_DIR / ".env")
 
 
+def static_asset_version() -> str:
+    """Cache-bust the two local UI assets after a local code update."""
+
+    assets = (APP_DIR / "static" / "app.css", APP_DIR / "static" / "app.js")
+    return str(max(asset.stat().st_mtime_ns for asset in assets))
+
+
 def configured_data_dir() -> Path:
     configured = Path(os.getenv("APP_DATA_DIR", "data"))
     return configured if configured.is_absolute() else PROJECT_DIR / configured
@@ -53,7 +60,7 @@ templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=2, max_length=64)
-    password: str = Field(min_length=4, max_length=256)
+    password: str = Field(min_length=8, max_length=256)
 
 
 class QueryRequest(BaseModel):
@@ -95,6 +102,9 @@ class ManualCompanyRequest(BaseModel):
     supply_chain_role: str = Field(default="", max_length=300)
     products: str = Field(default="", max_length=500)
     capabilities: str = Field(default="", max_length=500)
+    input_materials: str = Field(default="", max_length=500)
+    output_products: str = Field(default="", max_length=500)
+    target_customer_industries: str = Field(default="", max_length=500)
     summary: str = Field(default="", max_length=1600)
     confidence: Literal["high", "medium", "low"] = "medium"
     notes: str = Field(default="", max_length=500)
@@ -153,7 +163,11 @@ def admin_user(user: DemoUser = Depends(current_user)) -> DemoUser:
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: Request) -> HTMLResponse:
     repository = get_repository(request)
-    return templates.TemplateResponse(request=request, name="index.html", context={"data_status": repository.status()})
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"data_status": repository.status(), "asset_version": static_asset_version()},
+    )
 
 
 @app.get("/api/health")
@@ -179,7 +193,7 @@ async def acceptance_status() -> dict:
             "单一轻量 Agent 与三类知识库",
             "CSV 预检、审核发布、人工录入与标签/来源校验",
         ],
-        "explicitly_out_of_scope": ["国产化基础软硬件适配与内网安全防护", "项目实施、用户培训和一年运维服务"],
+        "explicitly_out_of_scope": ["国产化基础软硬件适配、内网基础安全防护与常态化运维保障", "项目实施、用户培训、上线支持和一年基础运维服务"],
         "query_architecture": "Contextual Retrieval + FTS5/BM25 + BGE-M3 + RRF + BGE Cross-Encoder; SQL/Geo bypass RAG",
     }
 
@@ -253,9 +267,14 @@ async def consult_compat(payload: QueryRequest, request: Request) -> dict:
 
 
 @app.get("/api/parks/compare")
-async def compare_parks(request: Request, park_ids: str = Query(default="")) -> dict:
+async def compare_parks(
+    request: Request,
+    park_ids: str = Query(default=""),
+    sector: str | None = Query(default=None, max_length=128),
+    project_name: str | None = Query(default=None, max_length=160),
+) -> dict:
     ids = [item.strip() for item in park_ids.split(",") if item.strip()]
-    return get_repository(request).compare_parks(ids)
+    return get_repository(request).compare_parks(ids, sector=sector, project_name=project_name)
 
 
 @app.get("/api/landing/package")

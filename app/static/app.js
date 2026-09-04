@@ -18,9 +18,9 @@ const elements = {
   queryForm: $("#queryForm"), queryInput: $("#queryInput"), queryDistrict: $("#queryDistrict"), querySector: $("#querySector"), queryMode: $("#queryMode"), projectName: $("#projectName"), geoFields: $("#geoFields"), latitude: $("#latitude"), longitude: $("#longitude"), radiusKm: $("#radiusKm"), querySubmit: $("#querySubmit"), queryHint: $("#queryHint"), queryResults: $("#queryResults"),
   dataBadge: $("#dataBadge"), companyCount: $("#companyCount"), parkCount: $("#parkCount"), supportCount: $("#supportCount"), backendStatus: $("#backendStatus"),
   directoryForm: $("#directoryForm"), directoryQuery: $("#directoryQuery"), directoryDistrict: $("#directoryDistrict"), directorySector: $("#directorySector"), directoryTotal: $("#directoryTotal"), companyGrid: $("#companyGrid"), loadMore: $("#loadMoreCompanies"),
-  parkIds: $("#parkIds"), compareParks: $("#compareParks"), parkResults: $("#parkResults"),
+  parkIds: $("#parkIds"), parkSector: $("#parkSector"), parkProjectName: $("#parkProjectName"), compareParks: $("#compareParks"), parkResults: $("#parkResults"),
   landingProjectName: $("#landingProjectName"), landingDistrict: $("#landingDistrict"), buildLanding: $("#buildLanding"), landingResults: $("#landingResults"),
-  ledgerGate: $("#ledgerGate"), ledgerWorkspace: $("#ledgerWorkspace"), ledgerForm: $("#ledgerForm"), ledgerResults: $("#ledgerResults"),
+  ledgerGate: $("#ledgerGate"), ledgerWorkspace: $("#ledgerWorkspace"), ledgerForm: $("#ledgerForm"), ledgerResults: $("#ledgerResults"), ledgerDetailDialog: $("#ledgerDetailDialog"), ledgerDetailBody: $("#ledgerDetailBody"), closeLedgerDetail: $("#closeLedgerDetail"),
   adminGate: $("#adminGate"), adminWorkspace: $("#adminWorkspace"), importFile: $("#importFile"), previewImport: $("#previewImport"), importResults: $("#importResults"), manualCompanyForm: $("#manualCompanyForm"),
   loginButton: $("#loginButton"), logoutButton: $("#logoutButton"), loginDialog: $("#loginDialog"), loginForm: $("#loginForm"), loginUsername: $("#loginUsername"), loginPassword: $("#loginPassword"), loginFeedback: $("#loginFeedback"), closeLogin: $("#closeLogin"),
   companyDialog: $("#companyDialog"), companyDialogBody: $("#companyDialogBody"), closeCompany: $("#closeCompany"), acceptanceDialog: $("#acceptanceDialog"), acceptanceBody: $("#acceptanceBody"), closeAcceptance: $("#closeAcceptance"), acceptanceButton: $("#acceptanceButton"), toast: $("#toast"),
@@ -68,13 +68,16 @@ function updateSession(user) {
   elements.loginButton.hidden = Boolean(user);
   elements.logoutButton.hidden = !user;
   elements.logoutButton.textContent = user ? `${user.display_name} · 退出` : "退出";
-  $$(".auth-only").forEach((item) => { item.hidden = false; });
-  $$(".admin-only").forEach((item) => { item.hidden = false; });
+  const admin = user?.role === "admin";
+  $$(".auth-only").forEach((item) => { item.hidden = !user; });
+  $$(".admin-only").forEach((item) => { item.hidden = !admin; });
   elements.ledgerGate.hidden = Boolean(user);
   elements.ledgerWorkspace.hidden = !user;
-  const admin = user?.role === "admin";
   elements.adminGate.hidden = admin;
   elements.adminWorkspace.hidden = !admin;
+  // A saved URL or an expired session must not leave the browser focused on
+  // a page whose functions are no longer available to the current role.
+  if ((!user && !$("#ledger").hidden) || (!admin && !$("#data").hidden)) switchView("workspace");
   if (user) loadLedgers();
 }
 
@@ -109,7 +112,8 @@ async function loadFilterOptions() {
     setOptions(elements.querySector, sectors, "全部赛道");
     setOptions(elements.directoryDistrict, districts, "全部区域");
     setOptions(elements.directorySector, sectors, "全部赛道");
-    setOptions(elements.landingDistrict, districts, "常州市");
+    setOptions(elements.parkSector, sectors, "不限定赛道");
+    setOptions(elements.landingDistrict, state.options.landing_districts || districts, "常州市");
   } catch (error) { showToast(`筛选项加载失败：${error.message}`); }
 }
 
@@ -232,25 +236,63 @@ function renderGraph(graph) {
   return `<section class="graph-panel panel"><h3>局部产业关系图谱（最多 ${escapeHtml(graph.max_hops || 0)} 跳）</h3><p class="company-meta">所有 inferred / potential 边为待核验关联，不代表已确认合作。</p><div class="graph-path">${edges.length ? edges.map((edge) => `<div class="graph-edge"><b>${escapeHtml(nodes[edge.from_node] || edge.from_node)}</b> → ${escapeHtml(edge.relation)} → <b>${escapeHtml(nodes[edge.to_node] || edge.to_node)}</b><span>${escapeHtml(edge.evidence)}｜${escapeHtml(edge.status)}｜来源：${escapeHtml(toArray(edge.source_ids).join("、") || "待核验")}</span></div>`).join("") : "<p>当前没有可展开的图谱边。</p>"}</div></section>`;
 }
 
+function benchmarkCompleteness(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.max(0, Math.min(100, Math.round(number)))}%` : "—";
+}
+
+function renderParkBenchmark(comparison) {
+  const model = comparison.benchmark_model && typeof comparison.benchmark_model === "object" ? comparison.benchmark_model : null;
+  const definitions = toArray(model?.dimensions).filter((item) => item && typeof item === "object" && item.key);
+  const rows = toArray(model?.rows).filter((item) => item && typeof item === "object");
+  if (!model || !definitions.length || !rows.length) return "";
+
+  const headers = definitions.map((definition) => `<th scope="col"><b>${escapeHtml(definition.label || definition.key)}</b><span>${escapeHtml(definition.definition || "公开资料维度")}</span></th>`).join("");
+  const matrixRows = rows.map((row) => {
+    const dimensions = new Map(toArray(row.dimensions).filter((item) => item && typeof item === "object").map((item) => [String(item.key || ""), item]));
+    const cells = definitions.map((definition) => {
+      const item = dimensions.get(String(definition.key)) || {};
+      const evidenced = item.status === "evidenced";
+      const sectorMatch = item.requested_sector_match;
+      const sourceIds = toArray(item.source_ids).filter(Boolean).join("、");
+      const stateLabel = evidenced ? "已入库证据" : "待核验";
+      const matchLabel = sectorMatch === true ? " · 所选赛道匹配" : (sectorMatch === false ? " · 所选赛道待确认" : "");
+      return `<td><strong>${escapeHtml(item.value || "待向园区核验")}</strong><span class="benchmark-status ${evidenced ? "is-evidenced" : "is-pending"}">${escapeHtml(stateLabel + matchLabel)}</span><small>置信度：${escapeHtml(item.confidence || "unknown")}；来源：${escapeHtml(sourceIds || "待补充")}</small></td>`;
+    }).join("");
+    const pending = toArray(row.pending_dimensions).filter(Boolean).join("、");
+    return `<tr><th scope="row"><b>${escapeHtml(row.park_name || row.park_id || "园区")}</b><span>${escapeHtml(row.district || "区域待补充")}</span></th>${cells}<td><b>${escapeHtml(benchmarkCompleteness(row.evidence_completeness_percent))}</b><span>资料完备度</span><small>${escapeHtml(pending ? `待核验：${pending}` : "当前维度均有入库证据")}</small></td></tr>`;
+  }).join("");
+  const requestedSector = model.requested_sector ? `<p class="company-meta">本轮赛道：${escapeHtml(model.requested_sector)}</p>` : "";
+  return `<section class="benchmark-panel panel"><div><p class="eyebrow">公开证据对标模型</p><h3>${escapeHtml(model.name || "园区多维对标矩阵")}</h3>${requestedSector}</div><div class="benchmark-table-wrap" role="region" aria-label="园区公开证据多维对标矩阵" tabindex="0"><table class="benchmark-table"><thead><tr><th scope="col">园区</th>${headers}<th scope="col">资料与待核验项</th></tr></thead><tbody>${matrixRows}</tbody></table></div><p class="benchmark-boundary"><b>评分边界：</b>${escapeHtml(model.score_interpretation || "资料完备度仅反映公开证据覆盖情况，不构成招商优先级或准入结论。")}</p>${comparison.caveat ? `<p class="company-meta">${escapeHtml(comparison.caveat)}</p>` : ""}</section>`;
+}
+
 function renderParkResult(comparison) {
   const cards = toArray(comparison.parks).map((park) => `<article class="content-card panel"><h3>${escapeHtml(park.name)}</h3><p>${escapeHtml(park.summary || "")}</p><div class="metric-list">${toArray(park.metrics).map((metric) => `<div class="metric"><b>${escapeHtml(metric.label)}</b><span>${escapeHtml(metric.value)} · ${escapeHtml(metric.confidence || "unknown")}</span></div>`).join("")}</div>${renderSourceLinks(park.sources || [])}</article>`).join("");
   const phases = toArray(comparison.phased_plan).map((phase) => `<div class="phase"><b>${escapeHtml(phase.phase)} · ${escapeHtml(phase.goal)}</b><span>${escapeHtml(toArray(phase.actions).join("；"))}</span></div>`).join("");
-  return `<section class="content-grid">${cards}<article class="content-card panel"><h3>独资设立洽谈要点</h3><ul>${toArray(comparison.negotiation_points).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><div class="phase-list">${phases}</div></article></section>`;
+  const benchmark = renderParkBenchmark(comparison);
+  return `<div class="park-comparison-stack">${benchmark}<section class="content-grid">${cards}<article class="content-card panel"><h3>独资设立洽谈要点</h3><ul>${toArray(comparison.negotiation_points).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><div class="phase-list">${phases}</div></article></section></div>`;
 }
 
 function renderLandingResult(package) {
   const localization = package.localization && typeof package.localization === "object" ? package.localization : {};
+  const customization = package.customization && typeof package.customization === "object" ? package.customization : {};
+  const execution = package.execution && typeof package.execution === "object" ? package.execution : {};
   const district = package.district || localization.district || package.applicable_district || "";
   const scope = package.scope || localization.scope || package.applicable_scope || "";
   const note = package.localization_note || localization.note || package.note || "";
   const project = package.project_name || localization.project_name || "招商项目";
-  const context = `<article class="content-card panel"><p class="eyebrow">定制化落地配套包</p><h3>${escapeHtml(project)}</h3>${district ? `<div class="metric"><b>适用区域</b><span>${escapeHtml(district)}</span></div>` : ""}${scope ? `<div class="metric"><b>适用范围</b><span>${escapeHtml(scope)}</span></div>` : ""}${note ? `<p><b>定制与核验说明：</b>${escapeHtml(note)}</p>` : ""}</article>`;
+  const topics = toArray(customization.topic_hits).map((item) => `${item.track || "项目画像"}（${toArray(item.matched_keywords).join("、") || "关键词"}）`).filter(Boolean);
+  const context = `<article class="content-card panel"><p class="eyebrow">定制化落地配套包</p><h3>${escapeHtml(project)}</h3>${district ? `<div class="metric"><b>适用区域</b><span>${escapeHtml(district)}</span></div>` : ""}${scope ? `<div class="metric"><b>适用范围</b><span>${escapeHtml(scope)}</span></div>` : ""}${topics.length ? `<div class="metric"><b>项目画像</b><span>${escapeHtml(topics.join("；"))}</span></div>` : ""}${note ? `<p><b>定制与核验说明：</b>${escapeHtml(note)}</p>` : ""}<p class="company-meta">${escapeHtml(customization.method || "以下事项以项目名称与公开服务标签排序；仍须由属地窗口核验。")}</p>${execution.method ? `<p class="company-meta">查询方式：${escapeHtml(execution.method)}${execution.rag_called === false ? "（未调用 RAG）" : ""}</p>` : ""}</article>`;
+  const checklistItems = toArray(package.action_checklist).map((item) => `<li><b>${escapeHtml(item.priority || "常规")} · ${escapeHtml(item.workstream || "核验事项")}</b><span>${escapeHtml(item.phase || "待安排")}｜建议对接：${escapeHtml(item.suggested_owner || "待明确")}</span><p>${escapeHtml(item.action || "请结合公开来源逐项核验。")}</p><small>${escapeHtml(item.evidence_status || "待核验")}${toArray(item.supporting_service_ids).length ? ` · 关联资料：${escapeHtml(toArray(item.supporting_service_ids).join("、"))}` : ""}</small></li>`).join("");
+  const checklist = checklistItems ? `<article class="content-card panel landing-checklist"><h3>项目化落地核验清单</h3><ol>${checklistItems}</ol></article>` : "";
   const sections = toArray(package.sections).map((section) => `<article class="content-card panel"><h3>${escapeHtml(section.category)}</h3>${toArray(section.items).map((item) => {
     const itemScope = item.scope || item.district || item.applicable_scope || item.localization?.scope || "";
     const itemNote = item.localization_note || item.note || "";
-    return `<div class="landing-item"><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.summary)}</p><span class="company-meta">${itemScope ? `适用：${escapeHtml(itemScope)} · ` : ""}置信度：${escapeHtml(item.confidence || "unknown")} · 核验：${escapeHtml(item.verified_date || "待补充")}</span>${itemNote ? `<p class="company-meta">${escapeHtml(itemNote)}</p>` : ""}${renderSourceLinks(item.sources || [])}</div>`;
+    const relevance = item.project_relevance && typeof item.project_relevance === "object" ? item.project_relevance : {};
+    const relevanceText = toArray(relevance.matched_workstreams).join("、");
+    return `<div class="landing-item"><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.summary)}</p><span class="company-meta">${itemScope ? `适用：${escapeHtml(itemScope)} · ` : ""}置信度：${escapeHtml(item.confidence || "unknown")} · 核验：${escapeHtml(item.verified_date || "待补充")}</span>${relevanceText ? `<span class="landing-priority">${escapeHtml(relevance.priority || "高")}优先：${escapeHtml(relevanceText)}</span>` : ""}${itemNote ? `<p class="company-meta">${escapeHtml(itemNote)}</p>` : ""}${renderSourceLinks(item.sources || [])}</div>`;
   }).join("")}</article>`).join("");
-  return `<section class="content-grid">${context}${sections}</section>`;
+  return `<section class="content-grid">${context}${checklist}${sections}</section>`;
 }
 
 function renderExportBar(companies) {
@@ -281,8 +323,11 @@ async function loadCompanies({ append = false } = {}) {
 
 async function loadParkComparison() {
   const ids = elements.parkIds.value.trim();
+  const params = new URLSearchParams({ park_ids: ids });
+  if (elements.parkSector.value) params.set("sector", elements.parkSector.value);
+  if (elements.parkProjectName.value.trim()) params.set("project_name", elements.parkProjectName.value.trim());
   elements.parkResults.innerHTML = `<div class="empty-state">正在生成园区对标…</div>`;
-  try { const data = await api(`/api/parks/compare?park_ids=${encodeURIComponent(ids)}`, { auth: false }); elements.parkResults.innerHTML = renderParkResult(data); } catch (error) { elements.parkResults.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`; }
+  try { const data = await api(`/api/parks/compare?${params.toString()}`, { auth: false }); elements.parkResults.innerHTML = renderParkResult(data); } catch (error) { elements.parkResults.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`; }
 }
 
 async function loadLandingPackage() {
@@ -296,8 +341,80 @@ async function loadLedgers() {
   if (!state.user) return;
   try {
     const data = await api("/api/ledgers");
-    elements.ledgerResults.innerHTML = toArray(data.items).length ? data.items.map((item) => `<article class="ledger-card"><header><h3>${escapeHtml(item.company_name)} · ${escapeHtml(item.project_name)}</h3><span class="count-chip">${escapeHtml(item.stage)}</span></header><p>${escapeHtml(item.next_step)}</p><div class="ledger-meta"><span>负责人：${escapeHtml(item.owner)}</span><span>联系人：${escapeHtml(item.contact_name || "")}</span><span>${escapeHtml(item.contact_phone || "")}</span><span>${escapeHtml(item.contact_email || "")}</span></div></article>`).join("") : `<div class="empty-state"><h2>尚无台账</h2><p>可从企业卡片加入首条对接记录。</p></div>`;
+    const items = toArray(data.items);
+    elements.ledgerResults.innerHTML = items.length ? items.map(renderLedgerCard).join("") : `<div class="empty-state"><h2>尚无台账</h2><p>可从企业卡片加入首条对接记录。</p></div>`;
   } catch (error) { elements.ledgerResults.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`; }
+}
+
+const ledgerStages = ["待联系", "资料核验", "首次沟通", "重点跟进"];
+
+function formatLedgerDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function renderLedgerCard(item) {
+  const ledgerId = Number.parseInt(String(item.ledger_id), 10);
+  const canOpen = Number.isInteger(ledgerId) && ledgerId > 0;
+  return `<article class="ledger-card"><header><h3>${escapeHtml(item.company_name)} · ${escapeHtml(item.project_name)}</h3><span class="count-chip">${escapeHtml(item.stage)}</span></header><p>${escapeHtml(item.next_step)}</p><div class="ledger-meta"><span>负责人：${escapeHtml(item.owner)}</span><span>联系人：${escapeHtml(item.contact_name || "")}</span><span>${escapeHtml(item.contact_phone || "")}</span><span>${escapeHtml(item.contact_email || "")}</span></div>${canOpen ? `<div class="card-actions ledger-actions"><button class="mini-button" type="button" data-ledger-detail="${ledgerId}">查看详情 / 更新</button></div>` : ""}</article>`;
+}
+
+function renderLedgerDetail(item) {
+  const ledgerId = Number.parseInt(String(item.ledger_id), 10);
+  if (!Number.isInteger(ledgerId) || ledgerId < 1) {
+    elements.ledgerDetailBody.innerHTML = `<div class="empty-state"><h2>台账编号无效</h2><p>请关闭后从列表重新打开。</p></div>`;
+    return;
+  }
+  const stages = [...ledgerStages];
+  if (item.stage && !stages.includes(item.stage)) stages.unshift(item.stage);
+  const stageOptions = stages.map((stage) => `<option value="${escapeHtml(stage)}"${stage === item.stage ? " selected" : ""}>${escapeHtml(stage)}</option>`).join("");
+  const events = toArray(item.events);
+  const contacts = [item.contact_name, item.contact_phone, item.contact_email].filter(Boolean).map(escapeHtml).join(" · ") || "未提供";
+  const eventHtml = events.length ? events.map((event) => `<li><div><b>${escapeHtml(event.event_type || "台账事件")}</b><span>${escapeHtml(formatLedgerDate(event.created_at))}</span></div><p>${escapeHtml(event.detail || "—")}</p><small>操作人：${escapeHtml(event.actor || "系统")}</small></li>`).join("") : `<li class="ledger-event-empty">尚无事件记录。</li>`;
+  elements.ledgerDetailBody.innerHTML = `<div class="ledger-detail"><p class="eyebrow">企业对接电子台账</p><h2>${escapeHtml(item.company_name)} · ${escapeHtml(item.project_name)}</h2><p class="ledger-detail-subtitle">更新会写入台账事件历史；展示内容以当前登录角色获得的字段为准。</p><section class="detail-section"><div class="detail-grid"><div><b>企业 ID</b><span>${escapeHtml(item.company_id || "—")}</span></div><div><b>联系人</b><span>${contacts}</span></div><div><b>创建时间</b><span>${escapeHtml(formatLedgerDate(item.created_at))}</span></div><div><b>最后更新</b><span>${escapeHtml(formatLedgerDate(item.updated_at))}</span></div></div></section><section class="detail-section"><h3>更新跟进信息</h3><form id="ledgerDetailForm" class="form-grid ledger-edit-form" data-ledger-id="${ledgerId}"><label><span>阶段</span><select name="stage" required>${stageOptions}</select></label><label><span>负责人</span><input name="owner" maxlength="64" required value="${escapeHtml(item.owner || "")}"></label><label class="wide"><span>下一步</span><textarea name="next_step" rows="3" maxlength="300" required>${escapeHtml(item.next_step || "")}</textarea></label><button class="primary-button" type="submit">保存更新</button><p class="form-feedback wide" data-ledger-feedback aria-live="polite"></p></form></section><section class="detail-section"><h3>事件历史</h3><ol class="ledger-events">${eventHtml}</ol></section></div>`;
+}
+
+async function openLedgerDetail(ledgerId) {
+  if (!state.user) { openLogin(); return; }
+  const id = Number.parseInt(String(ledgerId), 10);
+  if (!Number.isInteger(id) || id < 1) { showToast("台账编号无效。"); return; }
+  elements.ledgerDetailBody.innerHTML = `<div class="empty-state"><p>正在读取台账详情与事件历史…</p></div>`;
+  if (!elements.ledgerDetailDialog.open) elements.ledgerDetailDialog.showModal();
+  try {
+    const item = await api(`/api/ledgers/${encodeURIComponent(id)}`);
+    renderLedgerDetail(item);
+  } catch (error) {
+    elements.ledgerDetailBody.innerHTML = `<div class="empty-state"><h2>无法读取台账</h2><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(error.message);
+  }
+}
+
+async function submitLedgerUpdate(event) {
+  event.preventDefault();
+  const form = event.target;
+  const ledgerId = Number.parseInt(String(form.dataset.ledgerId), 10);
+  const feedback = form.querySelector("[data-ledger-feedback]");
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (!Number.isInteger(ledgerId) || ledgerId < 1) { showToast("台账编号无效。"); return; }
+  const payload = {
+    stage: String(form.elements.stage?.value || "").trim(),
+    owner: String(form.elements.owner?.value || "").trim(),
+    next_step: String(form.elements.next_step?.value || "").trim(),
+  };
+  if (feedback) feedback.textContent = "";
+  if (submitButton) submitButton.disabled = true;
+  try {
+    const item = await api(`/api/ledgers/${encodeURIComponent(ledgerId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    await loadLedgers();
+    renderLedgerDetail(item);
+    showToast("台账已更新，事件历史已同步。");
+  } catch (error) {
+    if (feedback) feedback.textContent = error.message;
+    showToast(error.message);
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
 }
 
 async function createLedger(companyId) {
@@ -408,14 +525,16 @@ function wireEvents() {
   elements.compareParks.addEventListener("click", loadParkComparison);
   elements.buildLanding.addEventListener("click", loadLandingPackage);
   elements.ledgerForm.addEventListener("submit", submitLedger);
+  elements.ledgerDetailDialog.addEventListener("submit", (event) => { if (event.target.matches("#ledgerDetailForm")) submitLedgerUpdate(event); });
   elements.loginButton.addEventListener("click", openLogin); elements.logoutButton.addEventListener("click", () => { updateSession(null); showToast("已退出本地会话。"); });
   elements.loginForm.addEventListener("submit", submitLogin); elements.closeLogin.addEventListener("click", () => elements.loginDialog.close());
-  elements.closeCompany.addEventListener("click", () => elements.companyDialog.close()); elements.closeAcceptance.addEventListener("click", () => elements.acceptanceDialog.close()); elements.acceptanceButton.addEventListener("click", (event) => { event.preventDefault(); showAcceptance(); });
+  elements.closeCompany.addEventListener("click", () => elements.companyDialog.close()); elements.closeLedgerDetail.addEventListener("click", () => elements.ledgerDetailDialog.close()); elements.closeAcceptance.addEventListener("click", () => elements.acceptanceDialog.close()); elements.acceptanceButton.addEventListener("click", (event) => { event.preventDefault(); showAcceptance(); });
   elements.previewImport.addEventListener("click", previewImport); elements.manualCompanyForm.addEventListener("submit", submitManualCompany);
   document.addEventListener("click", (event) => {
     const company = event.target.closest("[data-company]"); if (company) { openCompany(company.dataset.company); return; }
     const select = event.target.closest("[data-select]"); if (select) { toggleSelection(select.dataset.select); return; }
     const ledger = event.target.closest("[data-ledger]"); if (ledger) { createLedger(ledger.dataset.ledger); return; }
+    const ledgerDetail = event.target.closest("[data-ledger-detail]"); if (ledgerDetail) { openLedgerDetail(ledgerDetail.dataset.ledgerDetail); return; }
     const exportButton = event.target.closest("[data-export]"); if (exportButton) { downloadExport(exportButton.dataset.export); return; }
     if (event.target.closest("#publishImport")) publishImport();
   });

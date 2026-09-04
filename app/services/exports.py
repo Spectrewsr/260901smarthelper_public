@@ -105,7 +105,11 @@ class ExportService:
         return path, export_id
 
     def _bundle(self, companies: list[dict[str, Any]], project_name: str, *, template_key: str, template: Mapping[str, str]) -> dict[str, Any]:
-        parks = self.repository.compare_parks([])
+        sectors = {str(company.get("sector") or "") for company in companies if str(company.get("sector") or "")}
+        # A single selected industry can make the exported park matrix more
+        # useful without inferring facts for a mixed-sector selection.
+        park_sector = next(iter(sectors)) if len(sectors) == 1 else None
+        parks = self.repository.compare_parks([], sector=park_sector, project_name=project_name)
         districts = {str(company.get("district") or "") for company in companies if str(company.get("district") or "")}
         # When all selected enterprises are in one district, carry that scope
         # into the exported landing package.  Mixed selections remain honestly
@@ -231,6 +235,19 @@ class ExportService:
 
         doc.add_heading(str(template["park_heading"]), level=1)
         doc.add_paragraph(bundle["parks"].get("caveat", ""))
+        benchmark = bundle["parks"].get("benchmark_model", {})
+        benchmark_rows = benchmark.get("rows", []) if isinstance(benchmark, Mapping) else []
+        if benchmark_rows:
+            doc.add_heading("公开证据对标矩阵", level=2)
+            interpretation = str(benchmark.get("score_interpretation", ""))
+            if interpretation:
+                paragraph = doc.add_paragraph(interpretation)
+                paragraph.runs[0].font.size = Pt(8.5)
+                paragraph.runs[0].font.color.rgb = RGBColor(89, 99, 110)
+            for row in benchmark_rows:
+                pending = "、".join(str(item) for item in row.get("pending_dimensions", []) if str(item)) or "无"
+                paragraph = doc.add_paragraph(style="List Bullet")
+                paragraph.add_run(f"{row.get('park_name', '园区')}：资料完备度 {row.get('evidence_completeness_percent', '—')}%；待核验：{pending}。")
         for point in bundle["parks"].get("negotiation_points", []):
             paragraph = doc.add_paragraph(style="List Bullet")
             paragraph.paragraph_format.space_after = Pt(4)
@@ -243,6 +260,14 @@ class ExportService:
             paragraph.add_run("；".join(phase.get("actions", [])))
 
         doc.add_heading(str(template["landing_heading"]), level=1)
+        checklist = bundle["landing"].get("action_checklist", [])
+        if checklist:
+            doc.add_heading("项目化核验清单", level=2)
+            for item in checklist:
+                paragraph = doc.add_paragraph(style="List Bullet")
+                lead = paragraph.add_run(f"{item.get('phase', '待安排')} · {item.get('workstream', '核验事项')}：")
+                lead.bold = True
+                paragraph.add_run(f"{item.get('action', '')} 建议对接：{item.get('suggested_owner', '待明确')}。")
         for section_data in bundle["landing"].get("sections", []):
             doc.add_heading(str(section_data.get("category", "配套")), level=2)
             for item in section_data.get("items", []):
@@ -305,17 +330,42 @@ class ExportService:
             self._slide_text(slide, 0.85, y, 11.6, 0.3, f"{park.get('name')} · {park.get('district')}", 24, navy, bold=True)
             self._slide_text(slide, 1.15, y + 0.38, 11.1, 0.52, metrics or "公开指标待补录", 16, muted)
             y += 1.25
+        benchmark = bundle["parks"].get("benchmark_model", {})
+        benchmark_rows = benchmark.get("rows", []) if isinstance(benchmark, Mapping) else []
+        if benchmark_rows:
+            summary = "；".join(
+                f"{row.get('park_name', '园区')} {row.get('evidence_completeness_percent', '—')}%（待核验：{'、'.join(row.get('pending_dimensions', [])) or '无'}）"
+                for row in benchmark_rows
+            )
+            self._slide_text(slide, 0.85, 5.55, 11.4, 0.52, f"公开资料完备度：{summary}", 14, muted)
 
         slide = presentation.slides.add_slide(blank)
         self._slide_title(slide, str(template["landing_heading"]))
+        checklist = bundle["landing"].get("action_checklist", [])
+        if checklist:
+            first = checklist[0]
+            self._slide_text(
+                slide,
+                0.8,
+                1.25,
+                11.7,
+                0.34,
+                f"优先核验：{first.get('workstream', '项目事项')} · {first.get('action', '')}",
+                16,
+                muted,
+            )
         x = 0.8
         for section_data in bundle["landing"].get("sections", []):
             self._slide_text(slide, x, 1.75, 3.7, 0.35, str(section_data.get("category", "配套")), 24, blue, bold=True)
-            y = 2.3
-            for item in section_data.get("items", [])[:3]:
-                self._slide_text(slide, x, y, 3.7, 0.27, str(item.get("name", "")), 17, navy, bold=True)
-                self._slide_text(slide, x, y + 0.3, 3.7, 0.68, str(item.get("summary", ""))[:85], 14, muted)
-                y += 1.15
+            # A slide is a concise briefing rather than the full landing-service
+            # catalogue.  Keeping two entries and a bounded summary prevents a
+            # third long public-record description from colliding with the next
+            # entry after PowerPoint lays out Chinese text.
+            y = 2.25
+            for item in section_data.get("items", [])[:2]:
+                self._slide_text(slide, x, y, 3.7, 0.3, str(item.get("name", "")), 17, navy, bold=True)
+                self._slide_text(slide, x, y + 0.32, 3.7, 0.72, str(item.get("summary", ""))[:48], 14, muted)
+                y += 1.45
             x += 4.15
 
         slide = presentation.slides.add_slide(blank)
